@@ -7,6 +7,12 @@ A robust packetised version of the JPEG image format.
 
 Uses the Reed-Solomon codec written by Phil Karn, KA9Q.
 
+NOTICE
+
+The GitHub repository at https://github.com/fsphil/ssdv is being removed
+at the end of 2025. The new location is: https://codeberg.org/fsphil/ssdv
+Both repositories will be kept in sync until then.
+
 ENCODING
 
 $ ssdv -e -c TEST01 -i ID input.jpeg output.bin
