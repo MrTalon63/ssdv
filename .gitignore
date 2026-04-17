@@ -2,3 +2,7 @@ ssdv
 *.o
 *.jpeg
 *.bin*
+
+*.jpg
+
+*.exe

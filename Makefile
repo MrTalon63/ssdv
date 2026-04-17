@@ -1,5 +1,10 @@
 
-CC=gcc
+
+ifeq ($(OS),Windows_NT)
+    CC=x86_64-w64-mingw32-gcc
+else
+    CC=gcc
+endif
 CFLAGS=-g -O3 -Wall
 LDFLAGS=-g
 

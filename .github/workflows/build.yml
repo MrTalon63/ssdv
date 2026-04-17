@@ -1,0 +1,64 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-linux:
+    name: Linux (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential make
+
+      - name: Build
+        run: make clean && make
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssdv-linux-${{ matrix.arch }}
+          path: ssdv
+          if-no-files-found: error
+
+  build-windows:
+    name: Windows (amd64)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            make
+            mingw-w64-x86_64-gcc
+
+      - name: Build
+        shell: msys2 {0}
+        run: make clean && make
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssdv-windows-amd64
+          path: |
+            ssdv.exe
+            ssdv
+          if-no-files-found: error

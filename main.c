@@ -35,7 +35,7 @@ void exit_usage()
 		"  -n Encode packets with no FEC.\n"
 		"  -t For testing, drops the specified percentage of packets while decoding.\n"
 		"  -c Set the callign. Accepts A-Z 0-9 and space, up to 6 characters.\n"
-		"  -i Set the image ID (0-255).\n"
+		"  -i Set the image ID (0-65535).\n"
 		"  -q Set the JPEG quality level (0 to 7, defaults to 4).\n"
 		"  -l Set packet length in bytes (max: 256, default 256).\n"
 		"  -v Print data for each packet decoded.\n"
@@ -59,7 +59,7 @@ int main(int argc, char *argv[])
 	int verbose = 0;
 	int errors;
 	char callsign[7];
-	uint8_t image_id = 0;
+	uint16_t image_id = 0;
 	int8_t quality = 4;
 	int pkt_length = SSDV_PKT_SIZE;
 	ssdv_t ssdv;
@@ -86,7 +86,7 @@ int main(int argc, char *argv[])
 			strncpy(callsign, optarg, 6);
 			callsign[6] = '\0';
 			break;
-		case 'i': image_id = atoi(optarg); break;
+		case 'i': image_id = (uint16_t) atoi(optarg); break;
 		case 'q': quality = atoi(optarg); break;
 		case 'l': pkt_length = atoi(optarg); break;
 		case 't': droptest = atoi(optarg); break;
@@ -175,7 +175,7 @@ int main(int argc, char *argv[])
 				}
 				
 				ssdv_dec_header(&p, pkt);
-				fprintf(stderr, "Decoded image packet. Callsign: \"%s\", Image ID: %d, Resolution: %dx%d, Packet ID: %d (%d errors corrected)\n"
+				fprintf(stderr, "Decoded image packet. Callsign: \"%s\", Image ID: %u, Resolution: %dx%d, Packet ID: %u (%d errors corrected)\n"
 				                ">> Type: %d, Quality: %d, EOI: %d, MCU Mode: %d, MCU Offset: %d, MCU ID: %d/%d\n",
 					p.callsign_s,
 					p.image_id,

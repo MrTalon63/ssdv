@@ -919,7 +919,7 @@ static char ssdv_have_marker_data(ssdv_t *s)
 	return(SSDV_OK);
 }
 
-char ssdv_enc_init(ssdv_t *s, uint8_t type, char *callsign, uint8_t image_id, int8_t quality, int pkt_size)
+char ssdv_enc_init(ssdv_t *s, uint8_t type, char *callsign, uint16_t image_id, int8_t quality, int pkt_size)
 {
 	/* Limit the quality level */
 	if(quality < 0) quality = 0;
@@ -1069,18 +1069,19 @@ char ssdv_enc_get_packet(ssdv_t *s)
 				s->out[3]   = s->callsign >> 16;
 				s->out[4]   = s->callsign >> 8;
 				s->out[5]   = s->callsign;
-				s->out[6]   = s->image_id;         /* Image ID */
-				s->out[7]   = s->packet_id >> 8;   /* Packet ID MSB */
-				s->out[8]   = s->packet_id & 0xFF; /* Packet ID LSB */
-				s->out[9]   = s->width >> 4;       /* Width / 16 */
-				s->out[10]  = s->height >> 4;      /* Height / 16 */
-				s->out[11]  = 0x00;
-				s->out[11] |= ((s->quality - 4) & 7) << 3;  /* Quality level */
-				s->out[11] |= (r == SSDV_EOI ? 1 : 0) << 2; /* EOI flag (1 bit) */
-				s->out[11] |= s->mcu_mode & 0x03;  /* MCU mode (2 bits) */
-				s->out[12]  = mcu_offset;          /* Next MCU offset */
-				s->out[13]  = mcu_id >> 8;         /* MCU ID MSB */
-				s->out[14]  = mcu_id & 0xFF;       /* MCU ID LSB */
+				s->out[6]   = s->image_id >> 8;         /* Image ID MSB */
+				s->out[7]   = s->image_id & 0xFF;       /* Image ID LSB */
+				s->out[8]   = s->packet_id >> 8;        /* Packet ID MSB */
+				s->out[9]   = s->packet_id & 0xFF;      /* Packet ID LSB */
+				s->out[10]  = s->width >> 4;            /* Width / 16 */
+				s->out[11]  = s->height >> 4;           /* Height / 16 */
+				s->out[12]  = 0x00;
+				s->out[12] |= ((s->quality - 4) & 7) << 3;  /* Quality level */
+				s->out[12] |= (r == SSDV_EOI ? 1 : 0) << 2; /* EOI flag (1 bit) */
+				s->out[12] |= s->mcu_mode & 0x03;  /* MCU mode (2 bits) */
+				s->out[13]  = mcu_offset;          /* Next MCU offset */
+				s->out[14]  = mcu_id >> 8;         /* MCU ID MSB */
+				s->out[15]  = mcu_id & 0xFF;       /* MCU ID LSB */
 				
 				/* Fill any remaining bytes with noise */
 				if(s->out_len > 0) ssdv_memset_prng(s->outp, s->out_len);
@@ -1273,9 +1274,9 @@ char ssdv_dec_feed(ssdv_t *s, uint8_t *packet)
 	uint16_t packet_id;
 	
 	/* Read the packet header */
-	packet_id            = (packet[7] << 8) | packet[8];
-	s->packet_mcu_offset = packet[12];
-	s->packet_mcu_id     = (packet[13] << 8) | packet[14];
+	packet_id            = (packet[8] << 8) | packet[9];
+	s->packet_mcu_offset = packet[13];
+	s->packet_mcu_id     = (packet[14] << 8) | packet[15];
 	
 	if(s->packet_mcu_id != 0xFFFF)
 	{
@@ -1292,12 +1293,12 @@ char ssdv_dec_feed(ssdv_t *s, uint8_t *packet)
 		/* Read the fixed headers from the packet */
 		s->type      = packet[1] - 0x66;
 		s->callsign  = (packet[2] << 24) | (packet[3] << 16) | (packet[4] << 8) | packet[5];
-		s->image_id  = packet[6];
-		s->width     = packet[9] << 4;
-		s->height    = packet[10] << 4;
-		s->mcu_count = packet[9] * packet[10];
-		s->quality   = ((packet[11] >> 3) & 7) ^ 4;
-		s->mcu_mode  = packet[11] & 0x03;
+		s->image_id  = (packet[6] << 8) | packet[7];
+		s->width     = packet[10] << 4;
+		s->height    = packet[11] << 4;
+		s->mcu_count = packet[10] * packet[11];
+		s->quality   = ((packet[12] >> 3) & 7) ^ 4;
+		s->mcu_mode  = packet[12] & 0x03;
 		
 		/* Configure the payload size and CRC position */
 		ssdv_set_packet_conf(s);
@@ -1318,7 +1319,7 @@ char ssdv_dec_feed(ssdv_t *s, uint8_t *packet)
 		
 		/* Display information about the image */
 		fprintf(stderr, "Callsign: %s\n", decode_callsign(callsign, s->callsign));
-		fprintf(stderr, "Image ID: %02X\n", s->image_id);
+		fprintf(stderr, "Image ID: %u\n", s->image_id);
 		fprintf(stderr, "Resolution: %ix%i\n", s->width, s->height);
 		fprintf(stderr, "MCU blocks: %i\n", s->mcu_count);
 		fprintf(stderr, "Sampling factor: %s\n", factor);
@@ -1335,12 +1336,12 @@ char ssdv_dec_feed(ssdv_t *s, uint8_t *packet)
 		if(packet_id < s->packet_id)
 		{
 			/* The decoder can only accept packets in the correct order */
-			fprintf(stderr, "Packets are not in order. %i > %i\n", s->packet_id - 1, packet_id);
+			fprintf(stderr, "Packets are not in order. %lu > %lu\n", (unsigned long) (s->packet_id - 1), (unsigned long) packet_id);
 			return(SSDV_FEED_ME);
 		}
 		
 		/* One or more packets have been lost! */
-		fprintf(stderr, "Gap detected between packets %i and %i\n", s->packet_id - 1, packet_id);
+		fprintf(stderr, "Gap detected between packets %lu and %lu\n", (unsigned long) (s->packet_id - 1), (unsigned long) packet_id);
 		
 		/* If this packet has no new MCU, ignore */
 		if(s->packet_mcu_id == 0xFFFF) return(SSDV_FEED_ME);
@@ -1373,7 +1374,7 @@ char ssdv_dec_feed(ssdv_t *s, uint8_t *packet)
 			/* Abandon the packet if the MCU index is not what it should be. */
 			if(s->mcu_id != s->packet_mcu_id)
 			{
-				fprintf(stderr, "Unexpected MCU ID in packet %d.\n", packet_id);
+				fprintf(stderr, "Unexpected MCU ID in packet %lu.\n", (unsigned long) packet_id);
 				return(SSDV_FEED_ME);
 			}
 		}
@@ -1533,16 +1534,16 @@ void ssdv_dec_header(ssdv_packet_info_t *info, uint8_t *packet)
 	info->type       = packet[1] - 0x66;
 	info->callsign   = (packet[2] << 24) | (packet[3] << 16) | (packet[4] << 8) | packet[5];
 	decode_callsign(info->callsign_s, info->callsign);
-	info->image_id   = packet[6];
-	info->packet_id  = (packet[7] << 8) | packet[8];
-	info->width      = packet[9] << 4;
-	info->height     = packet[10] << 4;
-	info->eoi        = (packet[11] >> 2) & 1;
-	info->quality    = ((packet[11] >> 3) & 7) ^ 4;
-	info->mcu_mode   = packet[11] & 0x03;
-	info->mcu_offset = packet[12];
-	info->mcu_id     = (packet[13] << 8) | packet[14];
-	info->mcu_count  = packet[9] * packet[10];
+	info->image_id   = (packet[6] << 8) | packet[7];
+	info->packet_id  = (packet[8] << 8) | packet[9];
+	info->width      = packet[10] << 4;
+	info->height     = packet[11] << 4;
+	info->eoi        = (packet[12] >> 2) & 1;
+	info->quality    = ((packet[12] >> 3) & 7) ^ 4;
+	info->mcu_mode   = packet[12] & 0x03;
+	info->mcu_offset = packet[13];
+	info->mcu_id     = (packet[14] << 8) | packet[15];
+	info->mcu_count  = packet[10] * packet[11];
 	if(info->mcu_mode == 1 || info->mcu_mode == 2) info->mcu_count *= 2;
 	else if(info->mcu_mode == 3) info->mcu_count *= 4;
 }
