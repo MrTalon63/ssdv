@@ -27,7 +27,7 @@ void exit_usage()
 {
 	fprintf(stderr,
 		"\n"
-		"Usage: ssdv [-e|-d] [-n] [-t <percentage>] [-c <callsign>] [-i <id>] [-q <level>] [-l <length>] [<in file>] [<out file>]\n"
+		"Usage: ssdv [-e|-d] [-n] [-t <percentage>] [-c <callsign>] [-i <id>] [-q <level>] [-u <profile>] [-l <length>] [<in file>] [<out file>]\n"
 		"\n"
 		"  -e Encode JPEG to SSDV packets.\n"
 		"  -d Decode SSDV packets to JPEG.\n"
@@ -37,6 +37,7 @@ void exit_usage()
 		"  -c Set the callign. Accepts A-Z 0-9 and space, up to 6 characters.\n"
 		"  -i Set the image ID (0-65535).\n"
 		"  -q Set the JPEG quality level (0 to 7, defaults to 4).\n"
+		"  -u Set Huffman profile for encoding: 0 = standard, 1 = optimized (default).\n"
 		"  -l Set packet length in bytes (max: 256, default 256).\n"
 		"  -v Print data for each packet decoded.\n"
 		"\n"
@@ -61,6 +62,7 @@ int main(int argc, char *argv[])
 	char callsign[7];
 	uint16_t image_id = 0;
 	int8_t quality = 4;
+	uint8_t huff_profile = 1;
 	int pkt_length = SSDV_PKT_SIZE;
 	ssdv_t ssdv;
 	int skipped;
@@ -71,7 +73,7 @@ int main(int argc, char *argv[])
 	callsign[0] = '\0';
 	
 	opterr = 0;
-	while((c = getopt(argc, argv, "ednc:i:q:l:t:v")) != -1)
+	while((c = getopt(argc, argv, "ednc:i:q:u:l:t:v")) != -1)
 	{
 		switch(c)
 		{
@@ -88,6 +90,7 @@ int main(int argc, char *argv[])
 			break;
 		case 'i': image_id = (uint16_t) atoi(optarg); break;
 		case 'q': quality = atoi(optarg); break;
+		case 'u': huff_profile = (uint8_t) atoi(optarg); break;
 		case 'l': pkt_length = atoi(optarg); break;
 		case 't': droptest = atoi(optarg); break;
 		case 'v': verbose = 1; break;
@@ -176,7 +179,7 @@ int main(int argc, char *argv[])
 				
 				ssdv_dec_header(&p, pkt);
 				fprintf(stderr, "Decoded image packet. Callsign: \"%s\", Image ID: %u, Resolution: %dx%d, Packet ID: %lu (%d errors corrected)\n"
-				                ">> Type: %d, Quality: %d, EOI: %d, MCU Mode: %d, MCU Offset: %d, MCU ID: %lu/%lu\n",
+				                ">> Type: %d, Quality: %d, Huffman profile: %d, EOI: %d, MCU Mode: %d, MCU Offset: %d, MCU ID: %lu/%lu\n",
 					p.callsign_s,
 					p.image_id,
 					p.width,
@@ -185,6 +188,7 @@ int main(int argc, char *argv[])
 					errors,
 					p.type,
 					p.quality,
+					p.huff_profile,
 					p.eoi,
 					p.mcu_mode,
 					p.mcu_offset,
@@ -210,6 +214,11 @@ int main(int argc, char *argv[])
 		
 		if(ssdv_enc_init(&ssdv, type, callsign, image_id, quality, pkt_length) != SSDV_OK)
 		{
+			return(-1);
+		}
+		if(ssdv_set_huffman_profile(&ssdv, huff_profile) != SSDV_OK)
+		{
+			fprintf(stderr, "Invalid Huffman profile (use 0 or 1)\n");
 			return(-1);
 		}
 		

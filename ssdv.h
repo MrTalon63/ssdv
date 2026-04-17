@@ -61,6 +61,7 @@ typedef struct
 	uint32_t callsign;
 	uint16_t image_id;
 	uint32_t packet_id;
+	uint8_t  huff_profile; /* 0 = standard, 1 = low-entropy optimized     */
 	uint8_t  mcu_mode;  /* 0 = 2x2, 1 = 2x1, 2 = 1x2, 3 = 1x1           */
 	uint32_t mcu_id;
 	uint32_t mcu_count;
@@ -136,6 +137,7 @@ typedef struct {
 	char     callsign_s[SSDV_MAX_CALLSIGN + 1];
 	uint16_t image_id;
 	uint32_t packet_id;
+	uint8_t  huff_profile;
 	uint16_t width;
 	uint16_t height;
 	uint8_t  eoi;
@@ -148,6 +150,7 @@ typedef struct {
 
 /* Encoding */
 extern char ssdv_enc_init(ssdv_t *s, uint8_t type, char *callsign, uint16_t image_id, int8_t quality, int pkt_size);
+extern char ssdv_set_huffman_profile(ssdv_t *s, uint8_t profile);
 extern char ssdv_enc_set_buffer(ssdv_t *s, uint8_t *buffer);
 extern char ssdv_enc_get_packet(ssdv_t *s);
 extern char ssdv_enc_feed(ssdv_t *s, uint8_t *buffer, size_t length);

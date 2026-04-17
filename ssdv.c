@@ -108,6 +108,19 @@ static uint8_t const std_dht11[179] = {
 0xF8,0xF9,0xFA,
 };
 
+/* Preferred symbol ordering for the alternate Huffman profile.
+ * The code-length histogram is kept identical to the JPEG standard tables,
+ * only symbol assignment is changed to favor low-entropy SSDV output. */
+static uint8_t const alt_dc_pref[] = {
+	0x00, 0x01, 0x02, 0x03, 0x04, 0x05
+};
+
+static uint8_t const alt_ac_pref[] = {
+	0x00, 0x01, 0x02, 0x03, 0x11, 0x04, 0x05, 0x12,
+	0x21, 0x31, 0x41, 0xF0, 0x06, 0x13, 0x22, 0x51,
+	0x61, 0x07, 0x14, 0x32, 0x71, 0x81, 0x91, 0xA1
+};
+
 /* Helper for returning the current DHT table */
 #define SDHT (s->sdht[s->acpart ? 1 : 0][s->component ? 1 : 0])
 #define DDHT (s->ddht[s->acpart ? 1 : 0][s->component ? 1 : 0])
@@ -211,6 +224,91 @@ static void *dtblcpy(ssdv_t *s, const void *src, size_t n)
 	r = memcpy(&s->dtbls[s->dtbl_len], src, n);
 	s->dtbl_len += n;
 	return(r);
+}
+
+static size_t jpeg_dht_size(const uint8_t *dht)
+{
+	size_t i, n = 17;
+	for(i = 1; i <= 16; i++) n += dht[i];
+	return(n);
+}
+
+static void build_alt_dht(uint8_t *dst, const uint8_t *src, const uint8_t *pref, size_t pref_len)
+{
+	uint8_t seen[256] = {0};
+	size_t i, n = jpeg_dht_size(src);
+	size_t out = 17;
+	
+	memcpy(dst, src, 17);
+	
+	for(i = 0; i < pref_len; i++)
+	{
+		const uint8_t sym = pref[i];
+		size_t j;
+		if(seen[sym]) continue;
+		for(j = 17; j < n; j++)
+		{
+			if(src[j] == sym)
+			{
+				dst[out++] = sym;
+				seen[sym] = 1;
+				break;
+			}
+		}
+	}
+	
+	for(i = 17; i < n; i++)
+	{
+		const uint8_t sym = src[i];
+		if(!seen[sym])
+		{
+			dst[out++] = sym;
+			seen[sym] = 1;
+		}
+	}
+}
+
+static char ssdv_set_packet_huffman_profile(ssdv_t *s, uint8_t profile, char dst_only)
+{
+	uint8_t dht00[29], dht01[29], dht10[179], dht11[179];
+	const uint8_t *t00 = std_dht00, *t01 = std_dht01, *t10 = std_dht10, *t11 = std_dht11;
+	
+	if(profile > 1) profile = 0;
+	
+	if(profile == 1)
+	{
+		build_alt_dht(dht00, std_dht00, alt_dc_pref, sizeof(alt_dc_pref));
+		build_alt_dht(dht01, std_dht01, alt_dc_pref, sizeof(alt_dc_pref));
+		build_alt_dht(dht10, std_dht10, alt_ac_pref, sizeof(alt_ac_pref));
+		build_alt_dht(dht11, std_dht11, alt_ac_pref, sizeof(alt_ac_pref));
+		t00 = dht00; t01 = dht01; t10 = dht10; t11 = dht11;
+	}
+	
+	s->dtbl_len = 0;
+	if(!dst_only)
+	{
+		s->stbl_len = 0;
+		s->sdht[0][0] = stblcpy(s, t00, sizeof(dht00));
+		s->sdht[0][1] = stblcpy(s, t01, sizeof(dht01));
+		s->sdht[1][0] = stblcpy(s, t10, sizeof(dht10));
+		s->sdht[1][1] = stblcpy(s, t11, sizeof(dht11));
+		if(!s->sdht[0][0] || !s->sdht[0][1] || !s->sdht[1][0] || !s->sdht[1][1]) return(SSDV_ERROR);
+	}
+	
+	s->ddht[0][0] = dtblcpy(s, t00, sizeof(dht00));
+	s->ddht[0][1] = dtblcpy(s, t01, sizeof(dht01));
+	s->ddht[1][0] = dtblcpy(s, t10, sizeof(dht10));
+	s->ddht[1][1] = dtblcpy(s, t11, sizeof(dht11));
+	if(!s->ddht[0][0] || !s->ddht[0][1] || !s->ddht[1][0] || !s->ddht[1][1]) return(SSDV_ERROR);
+	
+	s->huff_profile = profile;
+	return(SSDV_OK);
+}
+
+char ssdv_set_huffman_profile(ssdv_t *s, uint8_t profile)
+{
+	/* Must be called after ssdv_enc_init() or ssdv_dec_init() */
+	return(ssdv_set_packet_huffman_profile(s, profile, s->mode == S_ENCODING ? 1 : 0));
 }
 
 static uint32_t crc32(void *data, size_t length)
@@ -942,13 +1040,10 @@ char ssdv_enc_init(ssdv_t *s, uint8_t type, char *callsign, uint16_t image_id, i
 	s->pkt_size = pkt_size;
 	ssdv_set_packet_conf(s);
 	
-	/* Prepare the output JPEG tables */
+	/* Prepare the packet Huffman profile and output JPEG tables */
+	if(ssdv_set_packet_huffman_profile(s, 1, 1) != SSDV_OK) return(SSDV_ERROR);
 	s->ddqt[0] = dload_standard_dqt(s, std_dqt0, s->quality);
 	s->ddqt[1] = dload_standard_dqt(s, std_dqt1, s->quality);
-	s->ddht[0][0] = dtblcpy(s, std_dht00, sizeof(std_dht00));
-	s->ddht[0][1] = dtblcpy(s, std_dht01, sizeof(std_dht01));
-	s->ddht[1][0] = dtblcpy(s, std_dht10, sizeof(std_dht10));
-	s->ddht[1][1] = dtblcpy(s, std_dht11, sizeof(std_dht11));
 	
 	return(SSDV_OK);
 }
@@ -1077,6 +1172,7 @@ char ssdv_enc_get_packet(ssdv_t *s)
 				s->out[11]  = s->width >> 4;               /* Width / 16 */
 				s->out[12]  = s->height >> 4;              /* Height / 16 */
 				s->out[13]  = 0x00;
+				s->out[13] |= (s->huff_profile & 1) << 7;       /* Huffman profile */
 				s->out[13] |= ((s->quality - 4) & 7) << 3;  /* Quality level */
 				s->out[13] |= (r == SSDV_EOI ? 1 : 0) << 2; /* EOI flag (1 bit) */
 				s->out[13] |= s->mcu_mode & 0x03;           /* MCU mode (2 bits) */
@@ -1180,10 +1276,10 @@ static void ssdv_out_headers(ssdv_t *s)
 	b[14] = 0x01;
 	ssdv_write_marker(s, J_SOF0,  15, b);  /* SOF0 (Baseline DCT) */
 	
-	ssdv_write_marker(s, J_DHT,   29, std_dht00); /* DHT (DC Luminance)  */
-	ssdv_write_marker(s, J_DHT,  179, std_dht10); /* DHT (AC Luminance)  */
-	ssdv_write_marker(s, J_DHT,   29, std_dht01); /* DHT (DC Chrominance */
-	ssdv_write_marker(s, J_DHT,  179, std_dht11); /* DHT (AC Chrominance */
+	ssdv_write_marker(s, J_DHT,  (uint16_t) jpeg_dht_size(s->ddht[0][0]), s->ddht[0][0]); /* DHT (DC Luminance)  */
+	ssdv_write_marker(s, J_DHT,  (uint16_t) jpeg_dht_size(s->ddht[1][0]), s->ddht[1][0]); /* DHT (AC Luminance)  */
+	ssdv_write_marker(s, J_DHT,  (uint16_t) jpeg_dht_size(s->ddht[0][1]), s->ddht[0][1]); /* DHT (DC Chrominance */
+	ssdv_write_marker(s, J_DHT,  (uint16_t) jpeg_dht_size(s->ddht[1][1]), s->ddht[1][1]); /* DHT (AC Chrominance */
 	ssdv_write_marker(s, J_SOS,   10, sos);
 }
 
@@ -1240,17 +1336,8 @@ char ssdv_dec_init(ssdv_t *s, int pkt_size)
 	s->state = S_HUFF;
 	s->mode = S_DECODING;
 	
-	/* Prepare the source JPEG tables */
-	s->sdht[0][0] = stblcpy(s, std_dht00, sizeof(std_dht00));
-	s->sdht[0][1] = stblcpy(s, std_dht01, sizeof(std_dht01));
-	s->sdht[1][0] = stblcpy(s, std_dht10, sizeof(std_dht10));
-	s->sdht[1][1] = stblcpy(s, std_dht11, sizeof(std_dht11));
-	
-	/* Prepare the output JPEG tables */
-	s->ddht[0][0] = dtblcpy(s, std_dht00, sizeof(std_dht00));
-	s->ddht[0][1] = dtblcpy(s, std_dht01, sizeof(std_dht01));
-	s->ddht[1][0] = dtblcpy(s, std_dht10, sizeof(std_dht10));
-	s->ddht[1][1] = dtblcpy(s, std_dht11, sizeof(std_dht11));
+	/* Prepare default Huffman tables (may be overridden by packet flags) */
+	if(ssdv_set_packet_huffman_profile(s, 0, 0) != SSDV_OK) return(SSDV_ERROR);
 	
 	return(SSDV_OK);
 }
@@ -1299,8 +1386,12 @@ char ssdv_dec_feed(ssdv_t *s, uint8_t *packet)
 		s->width     = packet[11] << 4;
 		s->height    = packet[12] << 4;
 		s->mcu_count = packet[11] * packet[12];
+		s->huff_profile = (packet[13] >> 7) & 1;
 		s->quality   = ((packet[13] >> 3) & 7) ^ 4;
 		s->mcu_mode  = packet[13] & 0x03;
+		
+		/* Select Huffman table set from packet flags */
+		if(ssdv_set_packet_huffman_profile(s, s->huff_profile, 0) != SSDV_OK) return(SSDV_ERROR);
 		
 		/* Configure the payload size and CRC position */
 		ssdv_set_packet_conf(s);
@@ -1540,6 +1631,7 @@ void ssdv_dec_header(ssdv_packet_info_t *info, uint8_t *packet)
 	info->packet_id  = (packet[8] << 16) | (packet[9] << 8) | packet[10];
 	info->width      = packet[11] << 4;
 	info->height     = packet[12] << 4;
+	info->huff_profile = (packet[13] >> 7) & 1;
 	info->eoi        = (packet[13] >> 2) & 1;
 	info->quality    = ((packet[13] >> 3) & 7) ^ 4;
 	info->mcu_mode   = packet[13] & 0x03;
