@@ -21,4 +21,3 @@ install: all
 
 clean:
 	rm -f *.o ssdv
-
