@@ -102,6 +102,10 @@ static int getopt(int argc, char * const argv[], const char *optstring)
 #endif
 #include "ssdv.h"
 
+#ifndef SSDV_VERSION
+#define SSDV_VERSION "dev"
+#endif
+
 static int build_output_path(char *path, size_t path_len, const char *base_path, int image_index)
 {
 	const char *dot, *sep;
@@ -186,6 +190,7 @@ void exit_usage()
 		"\n"
 		"  -e Encode JPEG to SSDV packets.\n"
 		"  -d Decode SSDV packets to JPEG.\n"
+		"  -v Print version and exit.\n"
 		"\n"
 		"  -n Encode packets with no FEC.\n"
 		"  -t For testing, drops the specified percentage of packets while decoding.\n"
@@ -194,7 +199,7 @@ void exit_usage()
 		"  -q Set the JPEG quality level (0 to 7, defaults to 4).\n"
 		"  -u Set Huffman profile for encoding: 0 = standard, 1 = optimized (default).\n"
 		"  -l Set packet length in bytes (max: 256, default 256).\n"
-		"  -v Print data for each packet decoded.\n"
+		"  -V Print data for each packet decoded.\n"
 		"\n"
 		"Packet Length\n"
 		"\n"
@@ -231,12 +236,15 @@ int main(int argc, char *argv[])
 	callsign[0] = '\0';
 	
 	opterr = 0;
-	while((c = getopt(argc, argv, "ednc:i:q:u:l:t:v")) != -1)
+	while((c = getopt(argc, argv, "ednvc:i:q:u:l:t:V")) != -1)
 	{
 		switch(c)
 		{
 		case 'e': encode = 1; break;
 		case 'd': encode = 0; break;
+		case 'v':
+			fprintf(stdout, "ssdv-ng %s\n", SSDV_VERSION);
+			return(0);
 		case 'n': type = SSDV_TYPE_NOFEC; break;
 		case 'c':
 			if(strlen(optarg) > 6)
@@ -251,7 +259,7 @@ int main(int argc, char *argv[])
 		case 'u': huff_profile = (uint8_t) atoi(optarg); break;
 		case 'l': pkt_length = atoi(optarg); break;
 		case 't': droptest = atoi(optarg); break;
-		case 'v': verbose = 1; break;
+		case 'V': verbose = 1; break;
 		case '?': exit_usage();
 		}
 	}

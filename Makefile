@@ -5,7 +5,8 @@ ifeq ($(OS),Windows_NT)
 else
     CC=gcc
 endif
-CFLAGS=-g -O3 -Wall
+VERSION?=1.0.0
+CFLAGS=-g -O3 -Wall -DSSDV_VERSION=\"$(VERSION)\"
 LDFLAGS=-g
 
 all: ssdv

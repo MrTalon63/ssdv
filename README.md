@@ -13,6 +13,16 @@ This version has been modified to support higher number of image IDs, up to 6553
 Also experimental optimized Huffman tables have been added, they're enabled by default and should improve compression efficiency for typical SSDV images, but the standard tables can be used with the `-u 0` option.
 Decoder will automatically detect which Huffman profile was used and decode accordingly.
 
+#### VERSION
+
+`ssdv -v`
+
+Prints the current binary version and exits.
+
+The version string is compiled in from Makefile variable `VERSION`:
+
+`make VERSION=1.2.3`
+
 #### ENCODING
 
 `ssdv -e -c TEST01 -i ID input.jpeg output.bin`
