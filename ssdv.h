@@ -68,7 +68,7 @@ typedef struct
 	uint32_t mcu_count;
 	uint8_t  quality;   /* JPEG quality level for encoding, 0-7         */
 	uint32_t packet_mcu_id;
-	uint8_t  packet_mcu_offset;
+	uint16_t packet_mcu_offset;
 	
 	/* Source buffer */
 	uint8_t *inp;      /* Pointer to next input byte                    */
@@ -144,7 +144,7 @@ typedef struct {
 	uint8_t  eoi;
 	uint8_t  quality;
 	uint16_t mcu_mode;
-	uint8_t  mcu_offset;
+	uint16_t mcu_offset;
 	uint32_t mcu_id;
 	uint32_t mcu_count;
 } ssdv_packet_info_t;
@@ -169,4 +169,3 @@ extern void ssdv_dec_header(ssdv_packet_info_t *info, uint8_t *packet);
 }
 #endif
 #endif
-

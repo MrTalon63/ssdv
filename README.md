@@ -33,32 +33,35 @@ The output file contains a series of fixed-length SSDV packets (default 256 byte
 
 Use `-u 0` to force standard Huffman tables, or `-u 1` (default) for the optimized profile.
 
+You can specify a custom packet length with `-l <length>`. Note that packet sizes larger than 256 bytes are only supported when Forward Error Correction is disabled (using the `-n` option).
+
 #### PACKET STRUCTURE
 
 Original packet structure can be found here: https://ukhas.org.uk/doku.php?id=guides:ssdv#packet_format
 
 Current packet header and trailer layout:
 
-| Byte offset              | Size (bytes) | Field               | Encoding / notes                                                                                                                                                 |
-| ------------------------ | -----------: | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0                        |            1 | Sync                | 0xD3 (11010011)                                                                                                                                                  |
-| 1                        |            1 | Packet type         | 0x66 + type                                                                                                                                                      |
-| 2-5                      |            4 | Callsign            | Base-40 encoded callsign. Up to 6 digits                                                                                                                         |
-| 6-7                      |            2 | Image ID            | Big-endian (MSB, LSB)                                                                                                                                            |
-| 8-10                     |            3 | Packet ID           | Big-endian (MSB, MID, LSB)                                                                                                                                       |
-| 11                       |            1 | Width               | width / 16                                                                                                                                                       |
-| 12                       |            1 | Height              | height / 16                                                                                                                                                      |
-| 13                       |            1 | Flags               | rhqqqexx: r = reserved, h = Huffman profile (0 = standard, 1 = low-entropy optimized), qqq = JPEG quality level (0-7 XOR 4), e = EOI flag, xx = subsampling mode |
-| 14                       |            1 | MCU offset          | Offset in bytes to the beginning of the first MCU block in the payload, or 0xFF if none present                                                                  |
-| 15-17                    |            3 | MCU index (MCU ID)  | The number of the MCU pointed to by the offset above (big endian), or 0xFFFFFF if none present                                                                   |
-| 18...                    |     variable | Payload             | Depends on total packet size and type                                                                                                                            |
-| after payload            |            4 | CRC32               | 32-bit CRC                                                                                                                                                       |
-| final (normal mode only) |           32 | Reed-Solomon parity | Present only for normal/FEC packets                                                                                                                              |
+| Byte offset              | Size (bytes) | Field               | Encoding / notes                                                                                                                                              |
+| ------------------------ | -----------: | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0                        |            1 | Sync                | 0xD3 (11010011)                                                                                                                                               |
+| 1-4                      |            4 | Callsign            | Base-40 encoded callsign. Up to 6 digits                                                                                                                      |
+| 5-6                      |            2 | Image ID            | Big-endian (MSB, LSB)                                                                                                                                         |
+| 7-9                      |            3 | Packet ID           | Big-endian (MSB, MID, LSB)                                                                                                                                    |
+| 10                       |            1 | Width               | width / 16                                                                                                                                                    |
+| 11                       |            1 | Height              | height / 16                                                                                                                                                   |
+| 12                       |            1 | Flags               | thqqqexx: t = type (0 = Normal/FEC, 1 = No-FEC), h = Huffman profile (0 = std, 1 = opt), qqq = JPEG quality level (0-7 XOR 4), e = EOI flag, xx = subsampling |
+| 13-14                    |            2 | MCU offset          | Offset in bytes to the beginning of the first MCU block in the payload, or 0xFFFF if none present                                                             |
+| 15-17                    |            3 | MCU index (MCU ID)  | The number of the MCU pointed to by the offset above (big endian), or 0xFFFFFF if none present                                                                |
+| 18...                    |     variable | Payload             | Depends on total packet size and type                                                                                                                         |
+| after payload            |            4 | CRC32               | 32-bit CRC                                                                                                                                                    |
+| final (normal mode only) |           32 | Reed-Solomon parity | Present only for normal/FEC packets                                                                                                                           |
 
-For total packet length up to 256 bytes:
+Packet length constraints:
 
-- No-FEC: header(18) + payload + crc(4) = pkt_size
-- Normal/FEC: header(18) + payload + crc(4) + rs(32) = pkt_size
+- Normal/FEC mode is strictly limited to a maximum packet size of 256 bytes due to the Reed-Solomon (GF(256)) implementation.
+    - Normal/FEC: header(18) + payload + crc(4) + rs(32) = pkt_size
+- No-FEC mode (`-n`) supports larger packet sizes (e.g. `-l 512`).
+    - No-FEC: header(18) + payload + crc(4) = pkt_size
 
 #### DECODING
 
