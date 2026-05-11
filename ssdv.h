@@ -46,6 +46,11 @@ extern "C" {
 #define SSDV_TYPE_INVALID (0xFF)
 #define SSDV_TYPE_NORMAL  (0x00)
 #define SSDV_TYPE_NOFEC   (0x01)
+#define SSDV_TYPE_CCSDS   (0x02)
+
+/* CCSDS packet constants (stripped: no sync, callsign, CRC, FEC) */
+#define SSDV_PKT_SIZE_CCSDS         (0xF6)   /* 246 bytes */
+#define SSDV_PKT_SIZE_CCSDS_HEADER  (0x0D)   /* 13 bytes */
 
 typedef struct
 {
@@ -163,7 +168,7 @@ extern char ssdv_dec_feed(ssdv_t *s, uint8_t *packet);
 extern char ssdv_dec_get_jpeg(ssdv_t *s, uint8_t **jpeg, size_t *length);
 
 extern char ssdv_dec_is_packet(uint8_t *packet, int pkt_size, int *errors);
-extern void ssdv_dec_header(ssdv_packet_info_t *info, uint8_t *packet);
+extern void ssdv_dec_header(ssdv_packet_info_t *info, uint8_t *packet, int pkt_size);
 
 #ifdef __cplusplus
 }

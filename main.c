@@ -186,19 +186,20 @@ void exit_usage()
 {
 	fprintf(stderr,
 		"\n"
-		"Usage: ssdv [-e|-d] [-n] [-t <percentage>] [-c <callsign>] [-i <id>] [-q <level>] [-u <profile>] [-l <length>] [<in file>] [<out file>]\n"
+		"Usage: ssdv [-e|-d] [-n] [-C] [-t <percentage>] [-c <callsign>] [-i <id>] [-q <level>] [-u <profile>] [-l <length>] [<in file>] [<out file>]\n"
 		"\n"
 		"  -e Encode JPEG to SSDV packets.\n"
 		"  -d Decode SSDV packets to JPEG.\n"
 		"  -v Print version and exit.\n"
 		"\n"
 		"  -n Encode packets with no FEC.\n"
+		"  -C Encode CCSDS packets (246 bytes, for use with CCSDS space packet).\n"
 		"  -t For testing, drops the specified percentage of packets while decoding.\n"
 		"  -c Set the callign. Accepts A-Z 0-9 and space, up to 6 characters.\n"
 		"  -i Set the image ID (0-65535).\n"
 		"  -q Set the JPEG quality level (0 to 7, defaults to 4).\n"
 		"  -u Set Huffman profile for encoding: 0 = standard, 1 = optimized (default).\n"
-		"  -l Set packet length in bytes (max: 256, default 256).\n"
+		"  -l Set packet length in bytes (default 256).\n"
 		"  -V Print data for each packet decoded.\n"
 		"\n"
 		"Packet Length\n"
@@ -235,7 +236,7 @@ int main(int argc, char *argv[])
 	callsign[0] = '\0';
 	
 	opterr = 0;
-	while((c = getopt(argc, argv, "ednvc:i:q:u:l:t:V")) != -1)
+	while((c = getopt(argc, argv, "ednCvc:i:q:u:l:t:V")) != -1)
 	{
 		switch(c)
 		{
@@ -245,6 +246,7 @@ int main(int argc, char *argv[])
 			fprintf(stdout, "ssdv-ng %s\n", SSDV_VERSION);
 			return(0);
 		case 'n': type = SSDV_TYPE_NOFEC; break;
+		case 'C': type = SSDV_TYPE_CCSDS; pkt_length = SSDV_PKT_SIZE_CCSDS; break;
 		case 'c':
 			if(strlen(optarg) > 6)
 			{
@@ -264,7 +266,7 @@ int main(int argc, char *argv[])
 	}
 
 	if (encode == 1 && pkt_length > SSDV_PKT_SIZE && type == SSDV_TYPE_NORMAL) {
-		fprintf(stderr, "Error: Packets larger than %d bytes are only supported with no FEC (-n option).\n", SSDV_PKT_SIZE);
+		fprintf(stderr, "Error: Packets larger than %d bytes are only supported with no FEC (-n option) or CCSDS mode (-C).\n", SSDV_PKT_SIZE);
 		return(-1);
 	}
 	
@@ -364,10 +366,10 @@ int main(int argc, char *argv[])
 			skipped = 0;
 			while(1)
 			{
-				/* Fast pre-check: Only run the heavy FEC decode if the sync byte
-				 * looks remotely valid. This speeds up decoding of large noisy
-				 * .bin files by ~100x without needing threads. */
-				if(pkt[0] == SSDV_PKT_SYNC)
+				/* Fast pre-check: For CCSDS packets, just validate directly. 
+				 * For SSDV packets, only run the heavy FEC decode if the sync byte
+				 * looks remotely valid. */
+				if(pkt_length == SSDV_PKT_SIZE_CCSDS || pkt[0] == SSDV_PKT_SYNC)
 				{
 					if((c = ssdv_dec_is_packet(pkt, pkt_length, &errors)) == 0)
 					{
@@ -392,7 +394,7 @@ int main(int argc, char *argv[])
 			/* No valid packet was found before EOF */
 			if(c != 0) break;
 
-			ssdv_dec_header(&p, pkt);
+			ssdv_dec_header(&p, pkt, pkt_length);
 
 			/* New image start: flush and reset the previous image decoder state */
 			if(p.packet_id == 0 && packets_in_image > 0)

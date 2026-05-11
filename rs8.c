@@ -54,12 +54,7 @@ static const uint8_t GENPOLY[] = {
 
 static inline int mod255(int x)
 {
-	while(x >= 255)
-	{
-		x -= 255;
-		x = (x >> 8) + (x & 255);
-	}
-	return(x);
+	return(x % 255);
 }
 #define MODNN(x) mod255(x)
 
@@ -110,8 +105,7 @@ int decode_rs_8(uint8_t *data, int *eras_pos, int no_eras, int pad)
 	int deg_lambda, el, deg_omega;
 	int i, j, r, k;
 	uint8_t u, q, tmp, num1, num2, den, discr_r;
-	uint8_t lambda[NROOTS + 1], s[NROOTS]; /* Err+Eras Locator poly
-	                                        * and syndrome poly */
+	uint8_t lambda[NROOTS + 1], s[NROOTS];	                                      
 	uint8_t b[NROOTS + 1], t[NROOTS + 1], omega[NROOTS + 1];
 	uint8_t root[NROOTS], reg[NROOTS + 1], loc[NROOTS];
 	int syn_error, count;

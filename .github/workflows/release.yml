@@ -65,24 +65,27 @@ jobs:
               uses: actions/checkout@v4
 
             - name: Install dependencies
-              run: sudo apt-get update && sudo apt-get install -y build-essential make
+              run: sudo apt-get update && sudo apt-get install -y build-essential make cmake pkg-config libgtk-3-dev libwebkit2gtk-4.0-dev
 
             - name: Build
               run: make clean && make VERSION=${{ needs.prepare.outputs.version }}
 
             - name: Show binary version
-              run: ./ssdv -v
+              run: ./build/bin/ssdv -v
 
             - name: Pack binary
               shell: bash
               run: |
-                  cp ssdv ssdv-${{ needs.prepare.outputs.asset_suffix }}-linux-${{ matrix.arch }}
+                  cp build/bin/ssdv ssdv-${{ needs.prepare.outputs.asset_suffix }}-linux-${{ matrix.arch }}
+                  cp build/bin/ssdv-gui ssdv-gui-${{ needs.prepare.outputs.asset_suffix }}-linux-${{ matrix.arch }}
 
             - name: Upload artifact
               uses: actions/upload-artifact@v4
               with:
                   name: ssdv-linux-${{ matrix.arch }}
-                  path: ssdv-${{ needs.prepare.outputs.asset_suffix }}-linux-${{ matrix.arch }}
+                  path: |
+                      ssdv-${{ needs.prepare.outputs.asset_suffix }}-linux-${{ matrix.arch }}
+                      ssdv-gui-${{ needs.prepare.outputs.asset_suffix }}-linux-${{ matrix.arch }}
                   if-no-files-found: error
 
     build-windows:
@@ -100,6 +103,7 @@ jobs:
                   update: true
                   install: >-
                       make
+                      cmake
                       mingw-w64-x86_64-gcc
 
             - name: Build
@@ -108,18 +112,21 @@ jobs:
 
             - name: Show binary version
               shell: msys2 {0}
-              run: ./ssdv.exe -v
+              run: ./build/bin/ssdv.exe -v
 
             - name: Pack binary
               shell: bash
               run: |
-                  cp ssdv.exe ssdv-${{ needs.prepare.outputs.asset_suffix }}-windows-amd64.exe
+                  cp build/bin/ssdv.exe ssdv-${{ needs.prepare.outputs.asset_suffix }}-windows-amd64.exe
+                  cp build/bin/ssdv-gui.exe ssdv-gui-${{ needs.prepare.outputs.asset_suffix }}-windows-amd64.exe
 
             - name: Upload artifact
               uses: actions/upload-artifact@v4
               with:
                   name: ssdv-windows-amd64
-                  path: ssdv-${{ needs.prepare.outputs.asset_suffix }}-windows-amd64.exe
+                  path: |
+                      ssdv-${{ needs.prepare.outputs.asset_suffix }}-windows-amd64.exe
+                      ssdv-gui-${{ needs.prepare.outputs.asset_suffix }}-windows-amd64.exe
                   if-no-files-found: error
 
     publish:

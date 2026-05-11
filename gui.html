@@ -1,0 +1,370 @@
+<!doctype html>
+<html>
+	<head>
+		<style>
+			body {
+				font-family: system-ui, sans-serif;
+				padding: 20px;
+				background: #f9f9f9;
+				color: #333;
+				margin: 0;
+			}
+			.main-wrapper {
+				display: flex;
+				gap: 20px;
+				max-width: 1150px;
+				margin: 0 auto;
+				align-items: flex-start;
+				justify-content: center;
+				flex-wrap: wrap;
+			}
+			.left-panel,
+			.right-panel {
+				display: flex;
+				flex-direction: column;
+				gap: 15px;
+				width: 100%;
+				max-width: 550px;
+			}
+			h2 {
+				margin-top: 0;
+			}
+			.container {
+				display: flex;
+				flex-direction: column;
+				gap: 12px;
+				width: 100%;
+				background: #fff;
+				padding: 20px;
+				border-radius: 8px;
+				box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+				box-sizing: border-box;
+			}
+			label {
+				font-weight: bold;
+				font-size: 0.9em;
+				margin-bottom: 2px;
+				display: block;
+				color: #555;
+			}
+			input,
+			select,
+			button {
+				padding: 8px;
+				border: 1px solid #ccc;
+				border-radius: 4px;
+				font-size: 0.95em;
+				width: 100%;
+				box-sizing: border-box;
+			}
+			button {
+				background: #0078d7;
+				color: white;
+				border: none;
+				cursor: pointer;
+				font-weight: bold;
+				padding: 10px;
+				margin-top: 5px;
+			}
+			button:hover {
+				background: #005a9e;
+			}
+			.input-group {
+				display: flex;
+				gap: 8px;
+			}
+			.input-group input {
+				flex: 1;
+				margin: 0;
+			}
+			.input-group button.browse {
+				flex: 0 0 auto;
+				background: #e1e1e1;
+				color: #333;
+				border: 1px solid #ccc;
+				font-weight: normal;
+				width: auto;
+				margin: 0;
+			}
+			.input-group button.browse:hover {
+				background: #d4d4d4;
+			}
+			.row {
+				display: flex;
+				gap: 12px;
+			}
+			.col {
+				flex: 1;
+				display: flex;
+				flex-direction: column;
+			}
+			pre {
+				background: #1e1e1e;
+				color: #d4d4d4;
+				padding: 15px;
+				border-radius: 4px;
+				overflow-x: auto;
+				min-height: 80px;
+				white-space: pre-wrap;
+				margin-bottom: 0;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="main-wrapper">
+			<div class="left-panel">
+				<div class="container">
+					<h2>SSDV-NG GUI</h2>
+
+					<div class="row">
+						<div class="col">
+							<label for="mode">Mode</label>
+							<select id="mode" onchange="toggleOptions()">
+								<option value="-d">Decode (.bin to .jpg)</option>
+								<option value="-e" selected>Encode (.jpg to .bin)</option>
+							</select>
+						</div>
+						<div class="col">
+							<label for="fec">Format</label>
+							<select id="fec" onchange="toggleOptions()">
+								<option value="">Normal (FEC)</option>
+								<option value="-n">No FEC (-n)</option>
+								<option value="-C">CCSDS (-C)</option>
+							</select>
+						</div>
+						<div class="col">
+							<label for="pktLen">Pkt Len (-l)</label>
+							<input type="number" id="pktLen" placeholder="Default (256)" />
+						</div>
+					</div>
+
+					<div id="encode-options" style="display: flex; flex-direction: column; gap: 12px">
+						<div class="row">
+							<div class="col">
+								<label for="callsign">Callsign (-c)</label>
+								<input type="text" id="callsign" placeholder="e.g. N0CALL" maxlength="6" />
+							</div>
+							<div class="col">
+								<label for="imageId">Image ID (-i)</label>
+								<input type="number" id="imageId" placeholder="0-65535" min="0" max="65535" />
+							</div>
+							<div class="col">
+								<label for="quality">Quality (-q)</label>
+								<select id="quality">
+									<option value="">Default (4)</option>
+									<option value="0">0</option>
+									<option value="1">1</option>
+									<option value="2">2</option>
+									<option value="3">3</option>
+									<option value="4">4</option>
+									<option value="5">5</option>
+									<option value="6">6</option>
+									<option value="7">7</option>
+								</select>
+							</div>
+							<div class="col">
+								<label for="huffman">Huffman (-u)</label>
+								<select id="huffman">
+									<option value="">Default (Opt)</option>
+									<option value="0">0 = Std</option>
+									<option value="1">1 = Opt</option>
+								</select>
+							</div>
+						</div>
+					</div>
+
+					<label for="inFile">Input File(s)</label>
+					<div class="input-group">
+						<input type="text" id="inFile" placeholder="e.g., input.bin (or drop file here)" />
+						<button type="button" class="browse" onclick="pickFile('inFile', false, true)">Browse...</button>
+					</div>
+
+					<label for="outFile">Output File</label>
+					<div class="input-group">
+						<input type="text" id="outFile" placeholder="e.g., output.jpg (leave blank for auto)" />
+						<button type="button" class="browse" onclick="pickFile('outFile', true, false)">Browse...</button>
+					</div>
+
+					<button onclick="run()">Execute</button>
+				</div>
+
+				<div class="container">
+					<h3 style="margin: 0">Console Output</h3>
+					<pre id="output" style="margin-top: 5px">Waiting for input...</pre>
+				</div>
+			</div>
+
+			<div class="right-panel" id="right-panel" style="display: none">
+				<div id="preview-container" class="container">
+					<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px">
+						<h3 style="margin: 0">History</h3>
+						<button onclick="clearHistory()" style="margin: 0; padding: 5px 12px; background: #e1e1e1; color: #333; width: auto">Clear</button>
+					</div>
+					<div id="previews" style="display: flex; flex-direction: column; gap: 15px"></div>
+				</div>
+			</div>
+		</div>
+
+		<script>
+			function toggleOptions() {
+				const mode = document.getElementById("mode").value;
+				document.getElementById("encode-options").style.display = mode === "-e" ? "flex" : "none";
+
+				const fec = document.getElementById("fec").value;
+				const pktLen = document.getElementById("pktLen");
+				const expectedPlaceholder = fec === "-C" ? "Default (246)" : "Default (256)";
+				if (pktLen.placeholder !== expectedPlaceholder) {
+					pktLen.value = "";
+					pktLen.placeholder = expectedPlaceholder;
+				}
+				pktLen.disabled = fec === "-C";
+			}
+
+			function clearHistory() {
+				document.getElementById("previews").innerHTML = "";
+				document.getElementById("right-panel").style.display = "none";
+			}
+
+			async function pickFile(inputId, isSave, isMulti) {
+				const path = isMulti ? await window.pick_files() : await window.pick_file(isSave);
+				if (path && path !== "") {
+					document.getElementById(inputId).value = path;
+					saveSettings();
+				}
+			}
+
+			async function run() {
+				const mode = document.getElementById("mode").value;
+				const inFile = document.getElementById("inFile").value;
+				const outFile = document.getElementById("outFile").value;
+
+				if (!inFile) {
+					document.getElementById("output").innerText = "Error: Input file is required.";
+					return;
+				}
+				const fec = document.getElementById("fec").value;
+				const pktLen = document.getElementById("pktLen").value;
+				const callsign = document.getElementById("callsign").value;
+				const imageId = document.getElementById("imageId").value;
+				const quality = document.getElementById("quality").value;
+				const huffman = document.getElementById("huffman").value;
+
+				const files = inFile.split("|");
+				let overallResult = "";
+
+				for (let i = 0; i < files.length; i++) {
+					const singleIn = files[i].trim();
+					if (!singleIn) continue;
+					let singleOut = outFile.trim();
+
+					// Auto-generate output filename if missing or if batch processing
+					if (files.length > 1 || !singleOut) {
+						const ext = mode === "-e" ? ".bin" : ".jpg";
+						let base = singleIn;
+						const dotIdx = base.lastIndexOf(".");
+						const slashIdx = Math.max(base.lastIndexOf("/"), base.lastIndexOf("\\"));
+						if (dotIdx > slashIdx) base = base.substring(0, dotIdx);
+						singleOut = base + ext;
+					}
+
+					overallResult += (files.length > 1 ? `[${i + 1}/${files.length}] ` : "") + `Processing ${singleIn}...\n`;
+					document.getElementById("output").innerText = overallResult;
+
+					// Yield to the browser rendering engine so "Processing..." actually shows up!
+					await new Promise((resolve) => setTimeout(resolve, 50));
+
+					const result = await window.run_ssdv(mode, singleIn, singleOut, fec, pktLen, callsign, imageId, quality, huffman);
+					overallResult += result.log + (files.length > 1 ? "\n" : "");
+
+					if (result.images && result.images.length > 0) {
+						document.getElementById("right-panel").style.display = "flex";
+						result.images.forEach((img) => {
+							const p = document.createElement("div");
+							p.innerHTML = `<div style="border:1px solid #ddd; padding:10px; border-radius:4px; background:#fafafa;">
+                            <h4 style="margin:0 0 10px 0; word-break:break-all;">${img.path.split(/[\\\\/]/).pop()}</h4>
+                            <img src="data:image/jpeg;base64,${img.data}" style="max-width:100%; border:1px solid #ccc;" />
+                            <div style="font-size:0.9em; color:#555; margin-top:8px;">
+                                <strong>Callsign:</strong> ${img.callsign || "N/A"} &nbsp;
+                                <strong>ID:</strong> ${img.imageId} &nbsp;
+                                <strong>Resolution:</strong> ${img.width}x${img.height}
+                            </div>
+                        </div>`;
+							// Prepend newest images to the top
+							document.getElementById("previews").prepend(p);
+						});
+					}
+					document.getElementById("output").innerText = overallResult;
+				}
+			}
+
+			// Prevent the webview from navigating to dropped files globally
+			window.addEventListener("dragover", (e) => e.preventDefault(), false);
+			window.addEventListener("drop", (e) => e.preventDefault(), false);
+
+			// Add drag and drop functionality to the text inputs
+			function setupDropZone(id) {
+				const el = document.getElementById(id);
+				el.addEventListener("dragover", (e) => {
+					e.preventDefault();
+					el.style.borderColor = "#0078D7";
+					el.style.backgroundColor = "#f0f8ff";
+				});
+				el.addEventListener("dragleave", (e) => {
+					e.preventDefault();
+					el.style.borderColor = "";
+					el.style.backgroundColor = "";
+				});
+				el.addEventListener("drop", (e) => {
+					e.preventDefault();
+					el.style.borderColor = "";
+					el.style.backgroundColor = "";
+					if (e.dataTransfer.files.length > 0) {
+						let paths = [];
+						for (let i = 0; i < e.dataTransfer.files.length; i++) {
+							paths.push(e.dataTransfer.files[i].path || e.dataTransfer.files[i].name);
+						}
+						el.value = paths.join("|");
+						saveSettings();
+					}
+				});
+			}
+			setupDropZone("inFile");
+			setupDropZone("outFile");
+
+			const SETTINGS_KEYS = ["mode", "fec", "pktLen", "callsign", "imageId", "quality", "huffman", "inFile", "outFile"];
+
+			function saveSettings() {
+				SETTINGS_KEYS.forEach((key) => {
+					const el = document.getElementById(key);
+					if (el) localStorage.setItem("ssdv_" + key, el.value);
+				});
+			}
+
+			function loadSettings() {
+				// Load 'mode' and 'fec' first to setup UI dependencies
+				["mode", "fec"].forEach((key) => {
+					const val = localStorage.getItem("ssdv_" + key);
+					if (val !== null) document.getElementById(key).value = val;
+				});
+				toggleOptions();
+
+				// Load remaining inputs
+				SETTINGS_KEYS.filter((k) => k !== "mode" && k !== "fec").forEach((key) => {
+					const val = localStorage.getItem("ssdv_" + key);
+					if (val !== null) document.getElementById(key).value = val;
+				});
+			}
+
+			window.onload = () => {
+				loadSettings();
+				SETTINGS_KEYS.forEach((key) => {
+					const el = document.getElementById(key);
+					if (el) {
+						el.addEventListener("change", saveSettings);
+						el.addEventListener("input", saveSettings);
+					}
+				});
+			};
+		</script>
+	</body>
+</html>

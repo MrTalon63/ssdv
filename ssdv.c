@@ -767,6 +767,11 @@ static void ssdv_set_packet_conf(ssdv_t *s)
 		s->pkt_size_payload = s->pkt_size - SSDV_PKT_SIZE_HEADER - SSDV_PKT_SIZE_CRC;
 		s->pkt_size_crcdata = SSDV_PKT_SIZE_HEADER + s->pkt_size_payload - 1;
 		break;
+
+	case SSDV_TYPE_CCSDS:
+		s->pkt_size_payload = s->pkt_size - SSDV_PKT_SIZE_CCSDS_HEADER;
+		s->pkt_size_crcdata = 0; /* No CRC in CCSDS mode */
+		break;
 	}
 }
 
@@ -1051,6 +1056,11 @@ char ssdv_enc_init(ssdv_t *s, uint8_t type, char *callsign, uint16_t image_id, i
 			fprintf(stderr, "Invalid SSDV packet length for FEC mode.\n");
 			return SSDV_ERROR;
 		}
+	} else if (type == SSDV_TYPE_CCSDS) {
+		if (pkt_size - SSDV_PKT_SIZE_CCSDS_HEADER < 2) {
+			fprintf(stderr, "Invalid SSDV packet length for CCSDS mode.\n");
+			return SSDV_ERROR;
+		}
 	} else { /* SSDV_TYPE_NOFEC */
 		if (pkt_size - SSDV_PKT_SIZE_HEADER - SSDV_PKT_SIZE_CRC < 2) {
 			fprintf(stderr, "Invalid SSDV packet length for No-FEC mode.\n");
@@ -1080,7 +1090,7 @@ char ssdv_enc_init(ssdv_t *s, uint8_t type, char *callsign, uint16_t image_id, i
 char ssdv_enc_set_buffer(ssdv_t *s, uint8_t *buffer)
 {
 	s->out     = buffer;
-	s->outp    = buffer + SSDV_PKT_SIZE_HEADER;
+	s->outp    = buffer + (s->type == SSDV_TYPE_CCSDS ? SSDV_PKT_SIZE_CCSDS_HEADER : SSDV_PKT_SIZE_HEADER);
 	s->out_len = s->pkt_size_payload;
 	
 	/* Zero the payload memory */
@@ -1169,8 +1179,6 @@ char ssdv_enc_get_packet(ssdv_t *s)
 			{
 				uint32_t mcu_id    = s->packet_mcu_id;
 				uint16_t mcu_offset = s->packet_mcu_offset;
-				uint32_t x;
-				int i;
 				
 				if(mcu_offset != 0xFFFF && mcu_offset >= s->pkt_size_payload)
 				{
@@ -1187,6 +1195,36 @@ char ssdv_enc_get_packet(ssdv_t *s)
 				}
 				
 				/* A packet is ready, create the headers */
+			if(s->type == SSDV_TYPE_CCSDS)
+			{
+				/* CCSDS packet format: 13-byte header, no sync/CRC/RS */
+				s->out[0]   = s->image_id >> 8;             /* Image ID MSB */
+				s->out[1]   = s->image_id & 0xFF;           /* Image ID LSB */
+				s->out[2]   = (s->packet_id >> 16) & 0xFF;  /* Packet ID MSB */
+				s->out[3]   = (s->packet_id >> 8) & 0xFF;   /* Packet ID MID */
+				s->out[4]   = s->packet_id & 0xFF;          /* Packet ID LSB */
+				s->out[5]   = s->width >> 4;                /* Width / 16 */
+				s->out[6]   = s->height >> 4;               /* Height / 16 */
+				s->out[7]   = 0x00;
+				s->out[7]  |= (s->huff_profile & 1) << 6;   /* Huffman profile */
+				s->out[7]  |= ((s->quality - 4) & 7) << 3;  /* Quality level */
+				s->out[7]  |= (r == SSDV_EOI ? 1 : 0) << 2; /* EOI flag (1 bit) */
+				s->out[7]  |= s->mcu_mode & 0x03;           /* MCU mode (2 bits) */
+				s->out[8]   = mcu_offset >> 8;              /* Next MCU offset MSB */
+				s->out[9]   = mcu_offset & 0xFF;            /* Next MCU offset LSB */
+				s->out[10]  = (mcu_id >> 16) & 0xFF;        /* MCU ID MSB */
+				s->out[11]  = (mcu_id >> 8) & 0xFF;         /* MCU ID MID */
+				s->out[12]  = mcu_id & 0xFF;                /* MCU ID LSB */
+				
+				/* CCSDS packets don't have CRC/RS codes, payload is clean */
+				/* No noise fill - CCSDS payload is deterministic */
+			}
+			else
+			{
+				/* Standard SSDV packet format: 18-byte header with sync/callsign */
+				uint32_t x;
+				int i;
+				
 				s->out[0]   = SSDV_PKT_SYNC;       /* Sync */
 				s->out[1]   = s->callsign >> 24;
 				s->out[2]   = s->callsign >> 16;
@@ -1228,30 +1266,31 @@ char ssdv_enc_get_packet(ssdv_t *s)
 				{
 					encode_rs_8(&s->out[1], &s->out[i], SSDV_PKT_SIZE - s->pkt_size);
 				}
-				
-				s->packet_id++;
-				
-				/* Have we reached the end of the image data? */
-				if(r == SSDV_EOI) s->state = S_EOI;
-				
-				return(SSDV_OK);
 			}
-			else if(r != SSDV_FEED_ME)
-			{
-				/* An error occured */
-				fprintf(stderr, "ssdv_process() failed: %i\n", r);
-				return(SSDV_ERROR);
-			}
-			break;
-		
-		case S_EOI:
-			/* Shouldn't reach this point */
-			break;
+			
+			s->packet_id++;
+			
+			/* Have we reached the end of the image data? */
+			if(r == SSDV_EOI) s->state = S_EOI;
+			
+			return(SSDV_OK);
 		}
-	}
+		else if(r != SSDV_FEED_ME)
+		{
+			/* An error occured */
+			fprintf(stderr, "ssdv_process() failed: %i\n", r);
+			return(SSDV_ERROR);
+		}
+		break;
 	
-	/* Need more data */
-	return(SSDV_FEED_ME);
+	case S_EOI:
+		/* Shouldn't reach this point */
+		break;
+	}
+}
+
+/* Need more data */
+return(SSDV_FEED_ME);
 }
 
 char ssdv_enc_feed(ssdv_t *s, uint8_t *buffer, size_t length)
@@ -1384,11 +1423,23 @@ char ssdv_dec_feed(ssdv_t *s, uint8_t *packet)
 	int i = 0, r;
 	uint8_t b;
 	uint32_t packet_id;
+	int is_ccsds = (s->pkt_size == SSDV_PKT_SIZE_CCSDS);
 	
-	/* Read the packet header */
-	packet_id            = ((uint32_t)packet[7] << 16) | ((uint32_t)packet[8] << 8) | packet[9];
-	s->packet_mcu_offset = (packet[13] << 8) | packet[14];
-	s->packet_mcu_id     = ((uint32_t)packet[15] << 16) | ((uint32_t)packet[16] << 8) | packet[17];
+	/* Read the packet header - offsets vary by packet type */
+	if(is_ccsds)
+	{
+		/* CCSDS packet format */
+		packet_id            = ((uint32_t)packet[2] << 16) | ((uint32_t)packet[3] << 8) | packet[4];
+		s->packet_mcu_offset = (packet[8] << 8) | packet[9];
+		s->packet_mcu_id     = ((uint32_t)packet[10] << 16) | ((uint32_t)packet[11] << 8) | packet[12];
+	}
+	else
+	{
+		/* Standard SSDV packet format */
+		packet_id            = ((uint32_t)packet[7] << 16) | ((uint32_t)packet[8] << 8) | packet[9];
+		s->packet_mcu_offset = (packet[13] << 8) | packet[14];
+		s->packet_mcu_id     = ((uint32_t)packet[15] << 16) | ((uint32_t)packet[16] << 8) | packet[17];
+	}
 	
 	if(s->packet_mcu_id != 0xFFFFFF)
 	{
@@ -1402,16 +1453,33 @@ char ssdv_dec_feed(ssdv_t *s, uint8_t *packet)
 		const char *factor;
 		char callsign[SSDV_MAX_CALLSIGN + 1];
 		
-		/* Read the fixed headers from the packet */
-		s->type      = (packet[12] >> 7) & 1;
-		s->callsign  = ((uint32_t)packet[1] << 24) | ((uint32_t)packet[2] << 16) | ((uint32_t)packet[3] << 8) | packet[4];
-		s->image_id  = (packet[5] << 8) | packet[6];
-		s->width     = packet[10] << 4;
-		s->height    = packet[11] << 4;
-		s->mcu_count = (uint32_t)packet[10] * (uint32_t)packet[11];
-		s->huff_profile = ssdv_packet_huff_profile(packet[12]);
-		s->quality   = ((packet[12] >> 3) & 7) ^ 4;
-		s->mcu_mode  = packet[12] & 0x03;
+		/* Read the fixed headers from the packet - offsets vary by packet type */
+		if(is_ccsds)
+		{
+			/* CCSDS packet format */
+			s->type      = SSDV_TYPE_CCSDS;
+			s->callsign  = 0;  /* No callsign in CCSDS */
+			s->image_id  = (packet[0] << 8) | packet[1];
+			s->width     = packet[5] << 4;
+			s->height    = packet[6] << 4;
+			s->mcu_count = (uint32_t)packet[5] * (uint32_t)packet[6];
+			s->huff_profile = ssdv_packet_huff_profile(packet[7]);
+			s->quality   = ((packet[7] >> 3) & 7) ^ 4;
+			s->mcu_mode  = packet[7] & 0x03;
+		}
+		else
+		{
+			/* Standard SSDV packet format */
+			s->type      = (packet[12] >> 7) & 1;
+			s->callsign  = ((uint32_t)packet[1] << 24) | ((uint32_t)packet[2] << 16) | ((uint32_t)packet[3] << 8) | packet[4];
+			s->image_id  = (packet[5] << 8) | packet[6];
+			s->width     = packet[10] << 4;
+			s->height    = packet[11] << 4;
+			s->mcu_count = (uint32_t)packet[10] * (uint32_t)packet[11];
+			s->huff_profile = ssdv_packet_huff_profile(packet[12]);
+			s->quality   = ((packet[12] >> 3) & 7) ^ 4;
+			s->mcu_mode  = packet[12] & 0x03;
+		}
 		
 		/* Select Huffman table set from packet flags */
 		if(ssdv_set_packet_huffman_profile(s, s->huff_profile, 0) != SSDV_OK) return(SSDV_ERROR);
@@ -1495,7 +1563,8 @@ char ssdv_dec_feed(ssdv_t *s, uint8_t *packet)
 			}
 		}
 		
-		b = packet[SSDV_PKT_SIZE_HEADER + i];
+		int header_offset = is_ccsds ? SSDV_PKT_SIZE_CCSDS_HEADER : SSDV_PKT_SIZE_HEADER;
+		b = packet[header_offset + i];
 		
 		/* Add the new byte to the work area */
 		s->workbits = (s->workbits << 8) | b;
@@ -1561,6 +1630,33 @@ char ssdv_dec_is_packet(uint8_t *packet, int pkt_size, int *errors)
 
 	/* Testing is destructive, work on a copy */
 	memcpy(pkt, packet, pkt_size);
+	
+	/* Check for CCSDS packet format first (246 bytes, no sync/FEC/CRC) */
+	if(pkt_size == SSDV_PKT_SIZE_CCSDS)
+	{
+		/* CCSDS packets are self-contained, no FEC or CRC validation */
+		type = SSDV_TYPE_CCSDS;
+		if(errors) *errors = 0;
+		
+		/* Sanity checks */
+		ssdv_dec_header(&p, pkt, pkt_size);
+		
+		if(p.width == 0 || p.height == 0) { free(pkt); return(-1); }
+		
+		pkt_size_payload = pkt_size - SSDV_PKT_SIZE_CCSDS_HEADER;
+		
+		if(p.mcu_id != 0xFFFFFF)
+		{
+			if(p.mcu_id >= p.mcu_count) { free(pkt); return(-1); }
+			if(p.mcu_offset >= pkt_size_payload) { free(pkt); return(-1); }
+		}
+		
+		/* Valid CCSDS packet */
+		free(pkt);
+		return(0);
+	}
+	
+	/* Standard SSDV packet validation */
 	pkt[0] = SSDV_PKT_SYNC;
 	
 	type = SSDV_TYPE_INVALID;
@@ -1641,13 +1737,15 @@ char ssdv_dec_is_packet(uint8_t *packet, int pkt_size, int *errors)
 	}
 	
 	/* Sanity checks */
-	ssdv_dec_header(&p, pkt);
+	ssdv_dec_header(&p, pkt, pkt_size);
 	
 	if(p.type != type) { free(pkt); return(-1); }
 	if(p.width == 0 || p.height == 0) { free(pkt); return(-1); }
 
 	if (p.type == SSDV_TYPE_NORMAL) {
 		pkt_size_payload = pkt_size - SSDV_PKT_SIZE_HEADER - SSDV_PKT_SIZE_CRC - SSDV_PKT_SIZE_RSCODES;
+	} else if (p.type == SSDV_TYPE_CCSDS) {
+		pkt_size_payload = pkt_size - SSDV_PKT_SIZE_CCSDS_HEADER;
 	} else {
 		pkt_size_payload = pkt_size - SSDV_PKT_SIZE_HEADER - SSDV_PKT_SIZE_CRC;
 	}
@@ -1664,22 +1762,46 @@ char ssdv_dec_is_packet(uint8_t *packet, int pkt_size, int *errors)
 	return(0);
 }
 
-void ssdv_dec_header(ssdv_packet_info_t *info, uint8_t *packet)
+void ssdv_dec_header(ssdv_packet_info_t *info, uint8_t *packet, int pkt_size)
 {
-	info->type       = (packet[12] >> 7) & 1;
-	info->callsign   = ((uint32_t)packet[1] << 24) | ((uint32_t)packet[2] << 16) | ((uint32_t)packet[3] << 8) | packet[4];
-	decode_callsign(info->callsign_s, info->callsign);
-	info->image_id   = (packet[5] << 8) | packet[6];
-	info->packet_id  = ((uint32_t)packet[7] << 16) | ((uint32_t)packet[8] << 8) | packet[9];
-	info->width      = packet[10] << 4;
-	info->height     = packet[11] << 4;
-	info->huff_profile = ssdv_packet_huff_profile(packet[12]);
-	info->eoi        = (packet[12] >> 2) & 1;
-	info->quality    = ((packet[12] >> 3) & 7) ^ 4;
-	info->mcu_mode   = packet[12] & 0x03;
-	info->mcu_offset = (packet[13] << 8) | packet[14];
-	info->mcu_id     = ((uint32_t)packet[15] << 16) | ((uint32_t)packet[16] << 8) | packet[17];
-	info->mcu_count  = (uint32_t)packet[10] * (uint32_t)packet[11];
+	int is_ccsds = (pkt_size == SSDV_PKT_SIZE_CCSDS);
+	
+	if(is_ccsds)
+	{
+		/* CCSDS format: 13-byte header, no sync/callsign/CRC */
+		info->type       = SSDV_TYPE_CCSDS;
+		info->callsign   = 0; /* No callsign in CCSDS mode */
+		info->image_id   = (packet[0] << 8) | packet[1];
+		info->packet_id  = ((uint32_t)packet[2] << 16) | ((uint32_t)packet[3] << 8) | packet[4];
+		info->width      = packet[5] << 4;
+		info->height     = packet[6] << 4;
+		info->huff_profile = ssdv_packet_huff_profile(packet[7]);
+		info->eoi        = (packet[7] >> 2) & 1;
+		info->quality    = ((packet[7] >> 3) & 7) ^ 4;
+		info->mcu_mode   = packet[7] & 0x03;
+		info->mcu_offset = (packet[8] << 8) | packet[9];
+		info->mcu_id     = ((uint32_t)packet[10] << 16) | ((uint32_t)packet[11] << 8) | packet[12];
+		info->mcu_count  = (uint32_t)packet[5] * (uint32_t)packet[6];
+	}
+	else
+	{
+		/* Standard SSDV format: 18-byte header with sync/callsign/CRC */
+		info->type       = (packet[12] >> 7) & 1;
+		info->callsign   = ((uint32_t)packet[1] << 24) | ((uint32_t)packet[2] << 16) | ((uint32_t)packet[3] << 8) | packet[4];
+		decode_callsign(info->callsign_s, info->callsign);
+		info->image_id   = (packet[5] << 8) | packet[6];
+		info->packet_id  = ((uint32_t)packet[7] << 16) | ((uint32_t)packet[8] << 8) | packet[9];
+		info->width      = packet[10] << 4;
+		info->height     = packet[11] << 4;
+		info->huff_profile = ssdv_packet_huff_profile(packet[12]);
+		info->eoi        = (packet[12] >> 2) & 1;
+		info->quality    = ((packet[12] >> 3) & 7) ^ 4;
+		info->mcu_mode   = packet[12] & 0x03;
+		info->mcu_offset = (packet[13] << 8) | packet[14];
+		info->mcu_id     = ((uint32_t)packet[15] << 16) | ((uint32_t)packet[16] << 8) | packet[17];
+		info->mcu_count  = (uint32_t)packet[10] * (uint32_t)packet[11];
+	}
+	
 	if(info->mcu_mode == 1 || info->mcu_mode == 2) info->mcu_count *= 2;
 	else if(info->mcu_mode == 3) info->mcu_count *= 4;
 }
