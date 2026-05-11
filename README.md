@@ -19,10 +19,6 @@ Decoder will automatically detect which Huffman profile was used and decode acco
 
 Prints the current binary version and exits.
 
-The version string is compiled in from Makefile variable `VERSION`:
-
-`make VERSION=1.2.3`
-
 #### ENCODING
 
 `ssdv -e -c TEST01 -i ID input.jpeg output.bin`
@@ -82,9 +78,30 @@ The encoder now uses Huffman profile `1` by default (optimized symbol ordering f
 
 #### INSTALLING
 
+The project uses CMake and builds both the command-line tool (`ssdv`) and a lightweight HTML/Webview-based GUI (`ssdv-gui`).
+
+**Prerequisites:**
+
+- CMake (3.16+)
+- Git
+- C/C++ Compiler (GCC, Clang, or MSVC)
+- **Linux only:** GTK3 and WebKit2GTK development headers.
+  _(e.g., on Ubuntu/Debian: `sudo apt install build-essential cmake git pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev`)_
+
+**Building:**
+
+You can build the project using standard CMake commands:
+
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release
+```
+
+Alternatively, a wrapper `Makefile` is provided for convenience on Unix-like systems:
+
+```bash
 make
+sudo make install
+```
 
-#### TODO
-
-- Allow the decoder to handle multiple images in the input stream.
-- Experiment with adaptive or multiple huffman tables.
+The compiled binaries (`ssdv` and `ssdv-gui` or `.exe` on Windows) will be located in the `build/bin/` directory.
