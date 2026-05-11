@@ -56,6 +56,20 @@ add_executable(ssdv-gui WIN32 gui.cpp ssdv.c rs8.c ${CMAKE_CURRENT_BINARY_DIR}/g
 target_include_directories(ssdv-gui PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(ssdv-gui PRIVATE webview::core)
 
+# Extract numeric version for Windows RC file (e.g., "2.0.0" -> "2,0,0,0")
+if(VERSION MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)")
+    set(RC_VERSION_COMMA "${CMAKE_MATCH_1},${CMAKE_MATCH_2},${CMAKE_MATCH_3},0")
+else()
+    set(RC_VERSION_COMMA "0,0,0,0")
+endif()
+
 if(WIN32)
     target_link_libraries(ssdv-gui PRIVATE comdlg32)
+    configure_file(resources.rc ${CMAKE_CURRENT_BINARY_DIR}/resources.rc @ONLY)
+    target_sources(ssdv-gui PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/resources.rc)
+endif()
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT APPLE)
+    target_link_options(ssdv PRIVATE -static-libgcc)
+    target_link_options(ssdv-gui PRIVATE -static-libstdc++ -static-libgcc)
 endif()
