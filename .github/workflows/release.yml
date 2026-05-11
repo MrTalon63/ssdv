@@ -96,23 +96,14 @@ jobs:
             - name: Checkout
               uses: actions/checkout@v4
 
-            - name: Setup MSYS2
-              uses: msys2/setup-msys2@v2
-              with:
-                  msystem: MINGW64
-                  update: true
-                  install: >-
-                      make
-                      cmake
-                      git
-                      mingw-w64-x86_64-gcc
-
             - name: Build
-              shell: msys2 {0}
-              run: make clean && make VERSION=${{ needs.prepare.outputs.version }}
+              shell: bash
+              run: |
+                  cmake -B build -DVERSION="${{ needs.prepare.outputs.version }}" -DCMAKE_BUILD_TYPE=Release
+                  cmake --build build --config Release
 
             - name: Show binary version
-              shell: msys2 {0}
+              shell: bash
               run: ./build/bin/ssdv.exe -v
 
             - name: Pack binary

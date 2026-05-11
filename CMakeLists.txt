@@ -13,7 +13,11 @@ set(VERSION "2.0.0" CACHE STRING "SSDV Version")
 add_compile_definitions(SSDV_VERSION="${VERSION}")
 
 add_executable(ssdv main.c ssdv.c rs8.c)
-target_compile_options(ssdv PRIVATE -O3 -Wall -g)
+if(MSVC)
+    target_compile_options(ssdv PRIVATE /W3)
+else()
+    target_compile_options(ssdv PRIVATE -O3 -Wall -g)
+endif()
 
 set(WEBVIEW_STATIC 1)
 
