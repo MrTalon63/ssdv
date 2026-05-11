@@ -8,11 +8,23 @@
 #include "gui_html.h"
 
 #ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #include <commdlg.h>
 #else
 #include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #endif
+
+#include <thread>
+#include <atomic>
+#include <chrono>
+
+std::atomic<bool> udp_running{false};
+std::thread udp_thread;
 
 // Helper to escape strings for JSON responses to JS
 std::string json_escape(const std::string& s) {
@@ -248,6 +260,7 @@ std::string process_ssdv(const std::string& req) {
                     img_json += "\"imageId\":" + std::to_string(last_info.image_id) + ",";
                     img_json += "\"width\":" + std::to_string(last_info.width) + ",";
                     img_json += "\"height\":" + std::to_string(last_info.height) + ",";
+                    img_json += "\"packets\":" + std::to_string(packets_in_image) + ",";
                     img_json += "\"data\":\"" + b64 + "\"";
                     img_json += "}";
                     images_json.push_back(img_json);
@@ -330,8 +343,275 @@ int main() {
         return open_file_dialog(false, true);
     });
     
+    w.bind("start_udp_listen", [&w](std::string req) -> std::string {
+        if (udp_running) {
+            udp_running = false;
+            if (udp_thread.joinable()) udp_thread.join();
+        }
+
+        std::vector<std::string> args;
+        std::string current;
+        bool in_string = false;
+        for (size_t i = 0; i < req.size(); i++) {
+            if (req[i] == '"' && (i == 0 || req[i-1] != '\\')) {
+                in_string = !in_string;
+                if (!in_string) { args.push_back(current); current.clear(); }
+            } else if (in_string) {
+                if (req[i] == '\\' && i+1 < req.size() && (req[i+1] == '"' || req[i+1] == '\\')) {
+                    current += req[i+1]; i++;
+                } else { current += req[i]; }
+            }
+        }
+        
+        if (args.size() < 4) return "\"Error: Invalid args\"";
+
+        std::string out_path = args[0];
+        std::string fec = args[1];
+        std::string pktLenStr = args[2];
+        std::string udpHost = args[3];
+
+        uint8_t type = SSDV_TYPE_NORMAL;
+        if (fec == "-n") type = SSDV_TYPE_NOFEC;
+        else if (fec == "-C") type = SSDV_TYPE_CCSDS;
+
+        int pkt_length = (type == SSDV_TYPE_CCSDS) ? SSDV_PKT_SIZE_CCSDS : SSDV_PKT_SIZE;
+        if (!pktLenStr.empty()) try { pkt_length = std::stoi(pktLenStr); } catch (...) {}
+
+        char host[256] = "";
+        int port = 0;
+        size_t colon = udpHost.find_last_of(':');
+        if (colon != std::string::npos) {
+            strncpy(host, udpHost.substr(0, colon).c_str(), sizeof(host)-1);
+            port = std::stoi(udpHost.substr(colon + 1));
+        } else {
+            port = std::stoi(udpHost);
+        }
+
+        udp_running = true;
+        udp_thread = std::thread([&w, out_path, type, pkt_length, port, host_str = std::string(host)]() {
+            char host[256];
+            strncpy(host, host_str.c_str(), sizeof(host)-1);
+            host[sizeof(host)-1] = '\0';
+            
+#ifdef _WIN32
+            WSADATA wsaData;
+            WSAStartup(MAKEWORD(2, 2), &wsaData);
+            SOCKET sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+#else
+            int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+#endif
+            
+            if (sockfd < 0) {
+                w.dispatch([&w]() { w.eval("appendLog(\"Error: Failed to create UDP socket.\")"); });
+                return;
+            }
+
+            int bufsize = 4 * 1024 * 1024;
+            setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, (const char *)&bufsize, sizeof(bufsize));
+
+            uint32_t ip = host[0] ? ntohl(inet_addr(host)) : 0;
+            bool is_multicast = (ip >= 0xE0000000) && (ip <= 0xEFFFFFFF);
+
+            int reuse = 1;
+            setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, (const char *)&reuse, sizeof(reuse));
+
+            struct sockaddr_in servaddr;
+            memset(&servaddr, 0, sizeof(servaddr));
+            servaddr.sin_family = AF_INET;
+            servaddr.sin_addr.s_addr = (host[0] && !is_multicast) ? inet_addr(host) : INADDR_ANY;
+            servaddr.sin_port = htons(port);
+
+            if (bind(sockfd, (const struct sockaddr *)&servaddr, sizeof(servaddr)) < 0) {
+                /* Fallback to 0.0.0.0 if explicit IP fails (e.g., broadcast or remote IPs) */
+                servaddr.sin_addr.s_addr = INADDR_ANY;
+                if (bind(sockfd, (const struct sockaddr *)&servaddr, sizeof(servaddr)) < 0) {
+                    w.dispatch([&w]() { w.eval("appendLog(\"Error: Failed to bind socket.\")"); });
+#ifdef _WIN32
+                    closesocket(sockfd); WSACleanup();
+#else
+                    close(sockfd);
+#endif
+                    return;
+                }
+            }
+
+            if (is_multicast) {
+                struct ip_mreq mreq;
+                mreq.imr_multiaddr.s_addr = inet_addr(host);
+                mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+                setsockopt(sockfd, IPPROTO_IP, IP_ADD_MEMBERSHIP, (const char *)&mreq, sizeof(mreq));
+                w.dispatch([&w, host]() { w.eval("appendLog(\"Joined multicast group " + std::string(host) + "\")"); });
+            }
+            
+            ssdv_t ssdv;
+            if (ssdv_dec_init(&ssdv, pkt_length) != SSDV_OK) {
+                w.dispatch([&w]() { w.eval("appendLog(\"Error: Failed to initialize decoder.\")"); });
+#ifdef _WIN32
+                closesocket(sockfd); WSACleanup();
+#else
+                close(sockfd);
+#endif
+                return;
+            }
+
+            size_t jpeg_length = 4 * 1024 * 1024;
+            uint8_t* jpeg = (uint8_t*)malloc(jpeg_length);
+            ssdv_dec_set_buffer(&ssdv, jpeg, jpeg_length);
+
+            uint8_t* pkt = (uint8_t*)malloc(pkt_length);
+            int images_written = 0;
+            int packets_in_image = 0;
+            ssdv_packet_info_t last_info;
+            memset(&last_info, 0, sizeof(last_info));
+
+            auto write_image = [&]() {
+                uint8_t* out_jpeg; size_t out_len;
+                ssdv_dec_get_jpeg(&ssdv, &out_jpeg, &out_len);
+                if (out_len > 0) {
+                    std::string img_path = out_path;
+                    if (!img_path.empty()) {
+                        if (images_written > 0) {
+                            size_t dot = img_path.find_last_of('.');
+                            if (dot == std::string::npos) img_path += "_" + std::to_string(images_written + 1);
+                            else img_path = img_path.substr(0, dot) + "_" + std::to_string(images_written + 1) + img_path.substr(dot);
+                        }
+                        FILE* f = fopen(img_path.c_str(), "wb");
+                        if (f) { fwrite(out_jpeg, 1, out_len, f); fclose(f); }
+                    }
+                    images_written++;
+
+                    std::string b64 = base64_encode(out_jpeg, out_len);
+                    std::string img_json = "{";
+                    img_json += "\"path\":" + json_escape(img_path) + ",";
+                    img_json += "\"callsign\":" + json_escape(last_info.callsign_s) + ",";
+                    img_json += "\"imageId\":" + std::to_string(last_info.image_id) + ",";
+                    img_json += "\"width\":" + std::to_string(last_info.width) + ",";
+                    img_json += "\"height\":" + std::to_string(last_info.height) + ",";
+                    img_json += "\"packets\":" + std::to_string(packets_in_image) + ",";
+                    img_json += "\"data\":\"" + b64 + "\"";
+                    img_json += "}";
+
+                    w.dispatch([&w, img_json]() {
+                        w.eval("addLiveImage(" + img_json + ")");
+                    });
+                }
+            };
+
+            auto update_preview = [&]() {
+                ssdv_t ssdv_copy = ssdv; // Shallow copy to preserve the real decoder state
+                uint8_t* out_jpeg; size_t out_len;
+                ssdv_dec_get_jpeg(&ssdv_copy, &out_jpeg, &out_len); // Safely finalize the copy
+                if (out_len > 0) {
+                    std::string b64 = base64_encode(out_jpeg, out_len);
+                    std::string img_json = "{";
+                    img_json += "\"path\":\"\",";
+                    img_json += "\"callsign\":" + json_escape(last_info.callsign_s) + ",";
+                    img_json += "\"imageId\":" + std::to_string(last_info.image_id) + ",";
+                    img_json += "\"width\":" + std::to_string(last_info.width) + ",";
+                    img_json += "\"height\":" + std::to_string(last_info.height) + ",";
+                    img_json += "\"packets\":" + std::to_string(packets_in_image) + ",";
+                    img_json += "\"data\":\"" + b64 + "\"";
+                    img_json += "}";
+
+                    w.dispatch([&w, img_json]() {
+                        w.eval("addLiveImage(" + img_json + ")");
+                    });
+                }
+            };
+
+            w.dispatch([&w]() { w.eval("appendLog(\"Listening for UDP SSDV frames...\")"); });
+
+            auto last_update = std::chrono::steady_clock::now();
+
+            while (udp_running) {
+                fd_set fds;
+                FD_ZERO(&fds);
+                FD_SET(sockfd, &fds);
+                struct timeval tv;
+                tv.tv_sec = 0;
+                tv.tv_usec = 100000; // 100ms timeout
+                
+                int ret = select((int)(sockfd + 1), &fds, NULL, NULL, &tv);
+                if (ret > 0) {
+                    uint8_t udp_buf[65536];
+                    int n = recvfrom(sockfd, (char*)udp_buf, sizeof(udp_buf), 0, NULL, NULL);
+                    if (n > 0) {
+                        /* Hunt for SSDV packets buried anywhere inside the large UDP datagrams */
+                        for (int i = 0; i < n; i++) {
+                            memmove(&pkt[0], &pkt[1], pkt_length - 1);
+                            pkt[pkt_length - 1] = udp_buf[i];
+
+                            int errors;
+                            if ((pkt_length == SSDV_PKT_SIZE_CCSDS || pkt[0] == SSDV_PKT_SYNC) && 
+                                ssdv_dec_is_packet(pkt, pkt_length, &errors) == 0) {
+                                
+                                ssdv_packet_info_t p;
+                                memset(&p, 0, sizeof(p));
+                                ssdv_dec_header(&p, pkt, pkt_length);
+                                last_info = p;
+
+                                if (p.packet_id == 0 && packets_in_image > 0) {
+                                    write_image();
+                                    ssdv_dec_init(&ssdv, pkt_length);
+                                    ssdv_dec_set_buffer(&ssdv, jpeg, jpeg_length);
+                                    packets_in_image = 0;
+                                }
+
+                                int feed_result = ssdv_dec_feed(&ssdv, pkt);
+                                packets_in_image++;
+
+                                if (feed_result == SSDV_OK || feed_result == SSDV_ERROR) {
+                                    if (feed_result == SSDV_OK) write_image();
+                                    ssdv_dec_init(&ssdv, pkt_length);
+                                    ssdv_dec_set_buffer(&ssdv, jpeg, jpeg_length);
+                                    packets_in_image = 0;
+                                } else {
+                                    auto now = std::chrono::steady_clock::now();
+                                    if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_update).count() > 250) {
+                                        update_preview();
+                                        last_update = now;
+                                    }
+                                }
+                                
+                                /* Clear the buffer so we don't double-detect the exact same packet */
+                                memset(pkt, 0, pkt_length);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (packets_in_image > 0) write_image();
+
+            free(jpeg);
+            free(pkt);
+#ifdef _WIN32
+            closesocket(sockfd); WSACleanup();
+#else
+            close(sockfd);
+#endif
+        });
+
+        return "\"\"";
+    });
+
+    w.bind("stop_udp_listen", [&](std::string req) -> std::string {
+        if (udp_running) {
+            udp_running = false;
+            if (udp_thread.joinable()) udp_thread.join();
+        }
+        return "\"\"";
+    });
+    
     w.set_html(html_content);
     w.run();
+
+    // Ensure graceful shutdown of background thread when the window closes
+    if (udp_running) {
+        udp_running = false;
+        if (udp_thread.joinable()) udp_thread.join();
+    }
+
     return 0;
 }
 

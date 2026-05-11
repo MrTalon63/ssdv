@@ -185,7 +185,12 @@
 						<button type="button" class="browse" onclick="pickFile('outFile', true, false)">Browse...</button>
 					</div>
 
-					<button onclick="run()">Execute</button>
+					<label for="udpHost" style="margin-top: 5px">UDP Listen Port / IP</label>
+					<div class="input-group">
+						<input type="text" id="udpHost" placeholder="e.g. 5000 or 224.1.1.1:5000 (For live decoding)" />
+					</div>
+
+					<button id="runBtn" onclick="run()">Execute</button>
 				</div>
 
 				<div class="container">
@@ -225,6 +230,45 @@
 				document.getElementById("right-panel").style.display = "none";
 			}
 
+			window.appendLog = function (msg) {
+				document.getElementById("output").innerText += "\n" + msg;
+			};
+
+			window.addLiveImage = function (img) {
+				document.getElementById("right-panel").style.display = "flex";
+				let el = document.getElementById("live-image-" + img.imageId);
+				if (el) {
+					el.querySelector("img").src = "data:image/jpeg;base64," + img.data;
+					if (img.path) {
+						let title = el.querySelector(".title-path");
+						if (title) title.innerText = "Live Decode: " + img.path.split(/[\\\\/]/).pop();
+					}
+					let stats = el.querySelector(".stats");
+					if (stats) {
+						stats.innerHTML = `<strong>Callsign:</strong> ${img.callsign || "N/A"} &nbsp; <strong>ID:</strong> ${img.imageId} &nbsp; <strong>Resolution:</strong> ${img.width}x${img.height} &nbsp; <strong>Packets:</strong> ${img.packets}`;
+					}
+					return;
+				}
+				const p = document.createElement("div");
+				p.id = "live-image-" + img.imageId;
+
+				let filename = img.path ? img.path.split(/[\\\\/]/).pop() : "In-Memory Stream";
+				if (filename === "") filename = "In-Memory Stream";
+
+				p.innerHTML = `<div style="border:1px solid #ddd; padding:10px; border-radius:4px; background:#fafafa; border-left: 4px solid #4CAF50;">
+					<h4 style="margin:0 0 10px 0; word-break:break-all;" class="title-path">Live Decode: ${filename}</h4>
+					<img src="data:image/jpeg;base64,${img.data}" style="max-width:100%; border:1px solid #ccc;" />
+					<div class="stats" style="font-size:0.9em; color:#555; margin-top:8px;">
+						<strong>Callsign:</strong> ${img.callsign || "N/A"} &nbsp;
+						<strong>ID:</strong> ${img.imageId} &nbsp;
+						<strong>Resolution:</strong> ${img.width}x${img.height} &nbsp;
+						<strong>Packets:</strong> ${img.packets}
+					</div>
+				</div>`;
+				// Prepend newest images to the top
+				document.getElementById("previews").prepend(p);
+			};
+
 			async function pickFile(inputId, isSave, isMulti) {
 				const path = isMulti ? await window.pick_files() : await window.pick_file(isSave);
 				if (path && path !== "") {
@@ -233,21 +277,45 @@
 				}
 			}
 
+			let udpIsRunning = false;
+
 			async function run() {
+				if (udpIsRunning) {
+					await window.stop_udp_listen();
+					udpIsRunning = false;
+					document.getElementById("runBtn").innerText = "Execute";
+					document.getElementById("output").innerText += "\nStopped UDP Listener.";
+					return;
+				}
+
 				const mode = document.getElementById("mode").value;
 				const inFile = document.getElementById("inFile").value;
 				const outFile = document.getElementById("outFile").value;
+				const udpHost = document.getElementById("udpHost").value;
 
-				if (!inFile) {
-					document.getElementById("output").innerText = "Error: Input file is required.";
+				if (!inFile && !udpHost) {
+					document.getElementById("output").innerText = "Error: Input file or UDP port is required.";
 					return;
 				}
+				if (udpHost && mode === "-e") {
+					document.getElementById("output").innerText = "Error: UDP encoding via GUI is not supported yet.";
+					return;
+				}
+
 				const fec = document.getElementById("fec").value;
 				const pktLen = document.getElementById("pktLen").value;
 				const callsign = document.getElementById("callsign").value;
 				const imageId = document.getElementById("imageId").value;
 				const quality = document.getElementById("quality").value;
 				const huffman = document.getElementById("huffman").value;
+
+				if (udpHost && mode === "-d") {
+					udpIsRunning = true;
+					document.getElementById("runBtn").innerText = "Stop Listening";
+					document.getElementById("output").innerText = "Starting UDP Listener on " + udpHost + "...";
+					await window.start_udp_listen(outFile, fec, pktLen, udpHost);
+					return;
+				}
 
 				const files = inFile.split("|");
 				let overallResult = "";
@@ -286,7 +354,8 @@
                             <div style="font-size:0.9em; color:#555; margin-top:8px;">
                                 <strong>Callsign:</strong> ${img.callsign || "N/A"} &nbsp;
                                 <strong>ID:</strong> ${img.imageId} &nbsp;
-                                <strong>Resolution:</strong> ${img.width}x${img.height}
+                                <strong>Resolution:</strong> ${img.width}x${img.height} &nbsp;
+                                <strong>Packets:</strong> ${img.packets}
                             </div>
                         </div>`;
 							// Prepend newest images to the top
@@ -331,7 +400,7 @@
 			setupDropZone("inFile");
 			setupDropZone("outFile");
 
-			const SETTINGS_KEYS = ["mode", "fec", "pktLen", "callsign", "imageId", "quality", "huffman", "inFile", "outFile"];
+			const SETTINGS_KEYS = ["mode", "fec", "pktLen", "callsign", "imageId", "quality", "huffman", "inFile", "outFile", "udpHost"];
 
 			function saveSettings() {
 				SETTINGS_KEYS.forEach((key) => {

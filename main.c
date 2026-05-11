@@ -20,6 +20,14 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#endif
 #ifndef _WIN32
 #include <unistd.h>
 #else
@@ -195,6 +203,7 @@ void exit_usage()
 		"  -n Encode packets with no FEC.\n"
 		"  -C Encode CCSDS packets (246 bytes, for use with CCSDS space packet).\n"
 		"  -t For testing, drops the specified percentage of packets while decoding.\n"
+		"  -U <[ip:]port> Listen (decode) or transmit (encode) SSDV packets via UDP.\n"
 		"  -c Set the callign. Accepts A-Z 0-9 and space, up to 6 characters.\n"
 		"  -i Set the image ID (0-65535).\n"
 		"  -q Set the JPEG quality level (0 to 7, defaults to 4).\n"
@@ -210,6 +219,18 @@ void exit_usage()
 	exit(-1);
 }
 
+static inline int get_next_byte(FILE *fin, int sockfd, uint8_t *udp_buf, int *len, int *pos) {
+	if (sockfd > 0) {
+		if (*pos >= *len) {
+			*len = recv(sockfd, (char*)udp_buf, 65536, 0);
+			if (*len <= 0) return EOF;
+			*pos = 0;
+		}
+		return udp_buf[(*pos)++];
+	}
+	return fgetc(fin);
+}
+
 int main(int argc, char *argv[])
 {
 	int c, i;
@@ -223,6 +244,8 @@ int main(int argc, char *argv[])
 	int droptest = 0;
 	int verbose = 0;
 	int errors;
+	int udp_port = 0;
+	char udp_host[256] = "";
 	char callsign[7];
 	uint16_t image_id = 0;
 	int8_t quality = 4;
@@ -234,9 +257,14 @@ int main(int argc, char *argv[])
 	size_t jpeg_length;
 	
 	callsign[0] = '\0';
+#ifdef _WIN32
+	SOCKET sockfd = INVALID_SOCKET;
+#else
+	int sockfd = -1;
+#endif
 	
 	opterr = 0;
-	while((c = getopt(argc, argv, "ednCvc:i:q:u:l:t:V")) != -1)
+	while((c = getopt(argc, argv, "ednCvc:i:q:u:l:t:VU:")) != -1)
 	{
 		switch(c)
 		{
@@ -261,6 +289,20 @@ int main(int argc, char *argv[])
 		case 'l': pkt_length = atoi(optarg); break;
 		case 't': droptest = atoi(optarg); break;
 		case 'V': verbose = 1; break;
+		case 'U':
+		{
+			char *colon = strrchr(optarg, ':');
+			if (colon) {
+				int len = colon - optarg;
+				if (len >= sizeof(udp_host)) len = sizeof(udp_host) - 1;
+				strncpy(udp_host, optarg, len);
+				udp_host[len] = '\0';
+				udp_port = atoi(colon + 1);
+			} else {
+				udp_port = atoi(optarg);
+			}
+			break;
+		}
 		case '?': exit_usage();
 		}
 	}
@@ -317,6 +359,70 @@ int main(int argc, char *argv[])
 		if(out_path && strcmp(out_path, "-")) decode_output_base = out_path;
 	}
 	
+	struct sockaddr_in destaddr;
+	memset(&destaddr, 0, sizeof(destaddr));
+
+	if (udp_port > 0)
+	{
+#ifdef _WIN32
+		WSADATA wsaData;
+		WSAStartup(MAKEWORD(2, 2), &wsaData);
+		sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+#else
+		sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+#endif
+		if (sockfd < 0) {
+			fprintf(stderr, "Failed to create UDP socket\n");
+			return -1;
+		}
+
+		int bufsize = 4 * 1024 * 1024;
+		if (setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, (const char *)&bufsize, sizeof(bufsize)) < 0) {
+			fprintf(stderr, "Warning: Failed to set UDP receive buffer size\n");
+		}
+		if (setsockopt(sockfd, SOL_SOCKET, SO_SNDBUF, (const char *)&bufsize, sizeof(bufsize)) < 0) {
+			fprintf(stderr, "Warning: Failed to set UDP send buffer size\n");
+		}
+
+		if (encode == 0) {
+			uint32_t ip = udp_host[0] ? ntohl(inet_addr(udp_host)) : 0;
+			int is_multicast = (ip >= 0xE0000000) && (ip <= 0xEFFFFFFF);
+
+			int reuse = 1;
+			setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, (const char *)&reuse, sizeof(reuse));
+
+			struct sockaddr_in servaddr;
+			memset(&servaddr, 0, sizeof(servaddr));
+			servaddr.sin_family = AF_INET;
+			servaddr.sin_addr.s_addr = (udp_host[0] && !is_multicast) ? inet_addr(udp_host) : INADDR_ANY;
+			servaddr.sin_port = htons(udp_port);
+			if (bind(sockfd, (const struct sockaddr *)&servaddr, sizeof(servaddr)) < 0) {
+				/* Fallback to 0.0.0.0 if explicit IP fails */
+				servaddr.sin_addr.s_addr = INADDR_ANY;
+				if (bind(sockfd, (const struct sockaddr *)&servaddr, sizeof(servaddr)) < 0) {
+					fprintf(stderr, "Failed to bind UDP socket to port %d\n", udp_port);
+					return -1;
+				}
+			}
+			
+			/* Automatically join multicast group if IP is in the 224.0.0.0 - 239.255.255.255 range */
+			if (is_multicast) {
+				struct ip_mreq mreq;
+				mreq.imr_multiaddr.s_addr = inet_addr(udp_host);
+				mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+				if (setsockopt(sockfd, IPPROTO_IP, IP_ADD_MEMBERSHIP, (const char *)&mreq, sizeof(mreq)) < 0) {
+					fprintf(stderr, "Warning: Failed to join multicast group %s\n", udp_host);
+				}
+			}
+			fprintf(stderr, "Listening for SSDV packets on UDP %s:%d...\n", udp_host[0] ? udp_host : "0.0.0.0", udp_port);
+		} else {
+			destaddr.sin_family = AF_INET;
+			destaddr.sin_port = htons(udp_port);
+			destaddr.sin_addr.s_addr = udp_host[0] ? inet_addr(udp_host) : inet_addr("127.0.0.1");
+			fprintf(stderr, "Transmitting SSDV packets to UDP %s:%d...\n", udp_host[0] ? udp_host : "127.0.0.1", udp_port);
+		}
+	}
+
 	pkt = malloc(pkt_length);
 	if (!pkt) {
 		fprintf(stderr, "Failed to allocate packet buffer\n");
@@ -354,7 +460,16 @@ int main(int argc, char *argv[])
 		}
 		ssdv_dec_set_buffer(&ssdv, jpeg, jpeg_length);
 		
-		while(fread(pkt, pkt_length, 1, fin) > 0)
+		uint8_t udp_buf[65536];
+		int udp_buf_len = 0, udp_buf_pos = 0;
+		
+		for (i = 0; i < pkt_length; i++) {
+			int next_byte = get_next_byte(fin, sockfd, udp_buf, &udp_buf_len, &udp_buf_pos);
+			if (next_byte == EOF) goto end_of_stream;
+			pkt[i] = (uint8_t)next_byte;
+		}
+
+		while(1)
 		{
 			ssdv_packet_info_t p;
 			int feed_result;
@@ -366,31 +481,20 @@ int main(int argc, char *argv[])
 			skipped = 0;
 			while(1)
 			{
-				/* Fast pre-check: For CCSDS packets, just validate directly. 
-				 * For SSDV packets, only run the heavy FEC decode if the sync byte
-				 * looks remotely valid. */
 				if(pkt_length == SSDV_PKT_SIZE_CCSDS || pkt[0] == SSDV_PKT_SYNC)
 				{
-					if((c = ssdv_dec_is_packet(pkt, pkt_length, &errors)) == 0)
-					{
-						break;
-					}
+					if((c = ssdv_dec_is_packet(pkt, pkt_length, &errors)) == 0) break;
 				}
-
-				/* Read 1 byte at a time until a new packet is found */
 				memmove(&pkt[0], &pkt[1], pkt_length - 1);
-				
-				int next_byte = fgetc(fin);
+				int next_byte = get_next_byte(fin, sockfd, udp_buf, &udp_buf_len, &udp_buf_pos);
 				if(next_byte == EOF)
 				{
 					c = -1;
 					break;
 				}
 				pkt[pkt_length - 1] = (uint8_t)next_byte;
-				
 				skipped++;
 			}
-			
 			/* No valid packet was found before EOF */
 			if(c != 0) break;
 
@@ -495,7 +599,16 @@ int main(int argc, char *argv[])
 				if(fout != stdout) fclose(fout);
 				return(-1);
 			}
+			
+			/* Refill buffer to start hunting for the next packet */
+			for (i = 0; i < pkt_length; i++) {
+				int next_byte = get_next_byte(fin, sockfd, udp_buf, &udp_buf_len, &udp_buf_pos);
+				if (next_byte == EOF) { c = -1; break; }
+				pkt[i] = (uint8_t)next_byte;
+			}
+			if (c != 0) break;
 		}
+end_of_stream:
 
 		if(packets_in_image > 0)
 		{
@@ -568,7 +681,11 @@ int main(int argc, char *argv[])
 				return(-1);
 			}
 			
-			fwrite(pkt, 1, pkt_length, fout);
+			if (udp_port > 0) {
+				sendto(sockfd, (const char *)pkt, pkt_length, 0, (const struct sockaddr *)&destaddr, sizeof(destaddr));
+			} else {
+				fwrite(pkt, 1, pkt_length, fout);
+			}
 			i++;
 		}
 		
@@ -584,6 +701,15 @@ int main(int argc, char *argv[])
 	free(pkt);
 	if(fin != stdin) fclose(fin);
 	if(fout != stdout) fclose(fout);
+
+	if(udp_port > 0) {
+#ifdef _WIN32
+		closesocket(sockfd);
+		WSACleanup();
+#else
+		close(sockfd);
+#endif
+	}
 	
 	return(0);
 }

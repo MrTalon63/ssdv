@@ -100,7 +100,7 @@ jobs:
             - name: Build
               shell: bash
               run: |
-                  cmake -B build -DVERSION="${{ needs.prepare.outputs.version }}" -DCMAKE_BUILD_TYPE=Release
+                  cmake -B build -DVERSION="${{ needs.prepare.outputs.version }}" -DCMAKE_BUILD_TYPE=Release -Wno-dev --no-warn-unused-cli
                   cmake --build build --config Release
 
             - name: Show binary version

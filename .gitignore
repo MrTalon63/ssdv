@@ -5,3 +5,4 @@ ssdv
 *.jpg
 *.exe
 build/
+*.frm
