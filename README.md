@@ -59,6 +59,10 @@ Packet length constraints:
 - No-FEC mode (`-n`) supports larger packet sizes (e.g. `-l 512`).
     - No-FEC: header(18) + payload + crc(4) = pkt_size
 
+##### CCSDS Mode
+
+When encoding with the `-C` option, the packet structure is modified to fit within a 246-byte CCSDS packet, and the header is changed to remove the sync byte and callsign, and remove CRC and Reed-Solomon parity, as these are expected to be handled by the CCSDS framing and error correction layers instead. More details on the CCSDS packet structure can be found in the [CCSDS_README.md](CCSDS_README.md) file.
+
 #### DECODING
 
 `ssdv -d input.bin output.jpeg`
